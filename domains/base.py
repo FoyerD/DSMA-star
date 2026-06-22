@@ -33,6 +33,6 @@ class SearchProblem(ABC):
     def heuristic(self, state: Any) -> float:
         """Return an admissible heuristic estimate from `state` to the goal."""
 
-    def state_hash(self, state: Any) -> Hashable:
+    def state_key(self, state: Any) -> Hashable:
         """Return a hashable key identifying `state`. Defaults to the state itself."""
         return state

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 import json
 from pathlib import Path
 from typing import List
@@ -10,23 +11,11 @@ from algorithms.base import SearchResult
 
 from .metrics import AggregateMetrics
 
-_RESULT_FIELDS = [
-    "algorithm_name",
-    "domain_name",
-    "instance_id",
-    "success",
-    "solution_cost",
-    "solution_depth",
-    "runtime_seconds",
-    "peak_memory_mb",
-    "nodes_expanded",
-    "nodes_generated",
-    "max_frontier_size",
-    "max_depth_reached",
-    "reexpansions",
-    "timeout",
-    "memory_limit_reached",
-    "error_message",
+# All dataclass fields except solution_actions (handled separately, since it's
+# a list and needs different CSV/JSON treatment), plus the solution_depth
+# property which isn't a dataclass field but is useful in the report.
+_RESULT_FIELDS = [f.name for f in dataclasses.fields(SearchResult) if f.name != "solution_actions"] + [
+    "solution_depth"
 ]
 
 
@@ -57,22 +46,25 @@ def save_results_json(results: List[SearchResult], path: Path) -> None:
 
 
 def print_summary_tables(summaries: List[AggregateMetrics]) -> None:
-    domains = sorted({s.domain_name for s in summaries})
-    for domain in domains:
-        print(f"\n=== Domain: {domain} ===")
+    groups = sorted({(s.domain_name, s.difficulty) for s in summaries})
+    for domain, difficulty in groups:
+        print(f"\n=== Domain: {domain} | Difficulty: {difficulty} ===")
         header = (
-            f"{'algorithm':<16}{'n':>4}{'success%':>10}{'timeout%':>10}{'mem-lim%':>10}"
-            f"{'avg_t(s)':>10}{'avg_mem(MB)':>12}{'avg_exp':>10}{'avg_gen':>10}{'avg_gap':>10}"
+            f"{'algorithm':<22}{'n':>4}{'success%':>10}{'node-lim%':>10}{'mem-lim%':>10}{'stack-ex%':>10}"
+            f"{'avg_t_solved(s)':>16}{'avg_mem(MB)':>12}{'avg_exp':>10}{'avg_gen':>10}"
+            f"{'avg_gap':>9}{'collapsed':>10}{'spilled':>9}{'loaded':>8}"
         )
         print(header)
         print("-" * len(header))
         for s in summaries:
-            if s.domain_name != domain:
+            if (s.domain_name, s.difficulty) != (domain, difficulty):
                 continue
             gap_str = f"{s.avg_optimality_gap:.3f}" if s.avg_optimality_gap is not None else "n/a"
             print(
-                f"{s.algorithm_name:<16}{s.num_instances:>4}"
-                f"{s.success_rate * 100:>9.1f}%{s.timeout_rate * 100:>9.1f}%{s.memory_limit_rate * 100:>9.1f}%"
-                f"{s.avg_runtime_seconds:>10.3f}{s.avg_peak_memory_mb:>12.2f}"
-                f"{s.avg_nodes_expanded:>10.1f}{s.avg_nodes_generated:>10.1f}{gap_str:>10}"
+                f"{s.algorithm_name:<22}{s.num_instances:>4}"
+                f"{s.success_rate * 100:>9.1f}%{s.node_limit_rate * 100:>9.1f}%{s.memory_limit_rate * 100:>9.1f}%"
+                f"{s.stack_exhausted_rate * 100:>9.1f}%"
+                f"{s.avg_runtime_seconds_solved:>16.3f}{s.avg_peak_memory_mb:>12.2f}"
+                f"{s.avg_nodes_expanded:>10.1f}{s.avg_nodes_generated:>10.1f}{gap_str:>9}"
+                f"{s.total_nodes_collapsed:>10}{s.total_nodes_spilled_to_disk:>9}{s.total_nodes_loaded_from_disk:>8}"
             )

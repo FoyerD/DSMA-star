@@ -13,17 +13,29 @@ that it literally uses a FIFO breadth-first queue.
 This module is intentionally isolated behind the `ILBFS` class so the
 interpretation can be swapped out later (e.g. for a literal breadth-first
 variant) without touching the rest of the codebase.
+
+STACK EXHAUSTION: because each DFS pass is implemented as Python recursion,
+a deep/hard instance can exhaust the call stack rather than RAM. Instead of
+silently crashing, the recursion limit is raised to `_RECURSION_LIMIT`
+(generous but Python-safe -- well within typical OS thread-stack sizes) for
+the duration of the search and restored afterward; hitting that limit raises
+Python's own `RecursionError`, which we catch and report as
+`result.stack_exhausted = True`. This is the realistic "ran out of stack"
+signal for a recursive algorithm, analogous to how `MemoryLimitError`
+reports a real RSS ceiling for the others.
 """
 from __future__ import annotations
 
+import sys
 from typing import Any, List, Optional, Tuple
 
 from domains.base import SearchProblem
 
-from ._run_utils import NodeLimitError, RunTracker, TimeoutError_
+from ._run_utils import MemoryLimitError, NodeLimitError, RunTracker
 from .base import SearchAlgorithm, SearchLimits, SearchResult
 
 _INF = float("inf")
+_RECURSION_LIMIT = 10_000
 
 
 class ILBFS(SearchAlgorithm):
@@ -37,7 +49,7 @@ class ILBFS(SearchAlgorithm):
             domain_name=getattr(problem, "name", "unknown"),
             instance_id="",
         )
-        tracker = RunTracker.start(limits.timeout_seconds, limits.max_nodes)
+        tracker = RunTracker.start(limits.max_nodes, limits.max_memory_mb)
 
         start = problem.initial_state
         bound = problem.heuristic(start)
@@ -45,11 +57,12 @@ class ILBFS(SearchAlgorithm):
         max_frontier_size = 0  # current recursion-stack depth, the "frontier" of a DFS-style search
         max_depth_reached = 0
 
+        previous_recursion_limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(max(previous_recursion_limit, _RECURSION_LIMIT))
         try:
             while True:
-                tracker.check_timeout()
                 path: List[Tuple[Any, Any]] = []  # (action, state) from root, root excluded
-                visited_on_path = {problem.state_hash(start)}
+                visited_on_path = {problem.state_key(start)}
                 counters = {"expanded": 0}
                 outcome = self._bounded_dfs(
                     problem,
@@ -73,12 +86,17 @@ class ILBFS(SearchAlgorithm):
                 if outcome.next_bound == _INF:
                     break  # search space exhausted, no solution exists
                 bound = outcome.next_bound
-        except TimeoutError_:
-            result.timeout = True
         except NodeLimitError:
+            result.node_limit_reached = True
+            result.error_message = "max_nodes safety valve exceeded"
+        except MemoryLimitError:
             result.memory_limit_reached = True
-            result.error_message = "max_nodes exceeded"
+            result.error_message = "real memory ceiling exceeded"
+        except RecursionError:
+            result.stack_exhausted = True
+            result.error_message = "Python call stack exhausted (RecursionError)"
         finally:
+            sys.setrecursionlimit(previous_recursion_limit)
             result.peak_memory_mb = tracker.stop()
             if result.peak_memory_mb > limits.max_memory_mb:
                 result.memory_limit_reached = True
@@ -102,8 +120,7 @@ class ILBFS(SearchAlgorithm):
         tracker: RunTracker,
         counters: dict,
     ) -> "_PassOutcome":
-        tracker.check_timeout()
-        tracker.check_node_limit()
+        tracker.check_limits()
 
         f = g + problem.heuristic(state)
         if f > bound:
@@ -117,7 +134,7 @@ class ILBFS(SearchAlgorithm):
         deepest = len(path)
 
         for action, next_state, cost in problem.successors(state):
-            next_key = problem.state_hash(next_state)
+            next_key = problem.state_key(next_state)
             if next_key in visited_on_path:
                 continue  # avoid trivial cycles within the current DFS path
             tracker.nodes_generated += 1

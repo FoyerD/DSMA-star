@@ -1,34 +1,25 @@
-"""Simplified Memory-Bounded A* (SMA*).
+"""Dynamic SMA*-Collapse: SMA* with an adaptively-sized RAM frontier.
 
-LIMITATIONS / DOCUMENTED ASSUMPTIONS (this is a teaching-grade simplification,
-not a textbook-perfect SMA*):
+This is our first proposed algorithm. It behaves exactly like the
+`SMAStar` in `sma_star.py` (same simplifications and limitations documented
+there: global duplicate suppression instead of a pure tree search, scalar
+forgotten-f backup on collapse, no reparenting on rediscovery) except that
+the memory bound `B_ram` is not fixed -- it adapts every
+`limits.epoch_generated_nodes` generated nodes based on how often the
+algorithm has had to collapse nodes to stay within budget:
 
-1. Global duplicate suppression, not a pure tree search. Each state occupies
-   at most one node (keyed by `problem.state_key()`). If a successor's state
-   is already present anywhere in the in-memory tree, the new edge is simply
-   dropped instead of creating a second node for the same state. This avoids
-   the bookkeeping complexity (and dangling-reference bugs) of reparenting
-   nodes when a cheaper path to an existing state is found later, at the cost
-   of occasionally keeping a slightly suboptimal parent for a state instead
-   of rewiring to a newly discovered cheaper path. Classic SMA* is a tree
-   search that can revisit the same state under different ancestors; this
-   simplification trades that flexibility for a much simpler and bug-free
-   implementation.
-2. When a node's children are deleted to free memory, we back up only a
-   single scalar "forgotten f-value" (the minimum f seen in the deleted
-   subtree) to the parent, as in the classic algorithm. We do NOT store
-   partial subtree shape, so when a node is later re-expanded its successors
-   are simply regenerated from scratch via `problem.successors`. This is
-   correct for deterministic domains (both bundled domains are deterministic)
-   but would be unsound for stochastic/non-deterministic successors.
-3. Node deletion picks the leaf with the worst (highest) backed-up f-value;
-   ties are broken by preferring the most recently generated node. We never
-   delete the root. If memory is exhausted down to a single node, the search
-   reports `memory_limit_reached` and stops rather than looping forever.
-4. f-values are kept monotonically non-decreasing along a path
-   (f_child = max(g(child) + h(child), f_parent)) to keep behavior sane even
-   if the heuristic were inconsistent, exactly as suggested in the standard
-   SMA* writeups.
+- If more than half of recently generated nodes had to be collapsed
+  (`collapse_ratio > 0.50`), memory pressure is high relative to the
+  problem: double `B_ram` (capped at `dynamic_max_ram_nodes`).
+- If fewer than 10% needed collapsing (`collapse_ratio < 0.10`), the search
+  has more memory than it needs: halve `B_ram` (floored at
+  `dynamic_min_ram_nodes`), then immediately enforce the smaller bound by
+  collapsing the worst nodes if the resident set is still oversized.
+
+`OPEN_RAM` in the spec corresponds to the full set of nodes currently
+resident in memory (`nodes` below), not just leaves -- ancestors of a
+resident leaf must stay resident too so f-values can be backed up and the
+solution path can be reconstructed, exactly as in our `SMAStar`.
 """
 from __future__ import annotations
 
@@ -53,7 +44,7 @@ class _Node:
     parent_key: Optional[Any]
     action: Optional[Any]
     depth: int
-    order: int  # creation order, used as a recency tie-breaker
+    order: int
     children: Set[Any] = field(default_factory=set)
     forgotten_f: float = _INF
     dead_end: bool = False
@@ -69,10 +60,20 @@ class _Node:
         return len(self.children) == 0
 
 
-class SMAStar(SearchAlgorithm):
-    """Simplified memory-bounded A*. See module docstring for limitations."""
+def _best_score(node: _Node):
+    # Lower f first; among ties prefer larger g (deeper node).
+    return (node.selection_f(), -node.g)
 
-    name = "sma_star"
+
+def _worst_score(node: _Node):
+    # Larger f first; among ties prefer smaller g (shallower node) for removal.
+    return (-node.selection_f(), node.g)
+
+
+class DynamicSMACollapse(SearchAlgorithm):
+    """SMA* with a dynamically resized RAM bound. See module docstring."""
+
+    name = "dynamic_sma_collapse"
 
     def search(self, problem: SearchProblem, limits: SearchLimits) -> SearchResult:
         result = SearchResult(
@@ -81,8 +82,15 @@ class SMAStar(SearchAlgorithm):
             instance_id="",
         )
         tracker = RunTracker.start(limits.max_nodes, limits.max_memory_mb)
-        memory_limit_nodes = max(2, limits.sma_memory_limit_nodes)
         counter = itertools.count()
+
+        b_ram = max(2, limits.dynamic_initial_ram_nodes)
+        b_ram_min = max(2, limits.dynamic_min_ram_nodes)
+        b_ram_max = max(b_ram_min, limits.dynamic_max_ram_nodes)
+        b_ram = min(max(b_ram, b_ram_min), b_ram_max)
+
+        collapsed_count_epoch = 0
+        generated_count_epoch = 0
 
         start = problem.initial_state
         start_key = problem.state_key(start)
@@ -100,8 +108,12 @@ class SMAStar(SearchAlgorithm):
         tracker.nodes_generated = 1
 
         nodes_expanded = 0
-        max_frontier_size = 1
         nodes_collapsed = 0
+        max_frontier_size = 1
+        ram_capacity_peak = b_ram
+        ram_capacity_min = b_ram
+        number_of_ram_increases = 0
+        number_of_ram_decreases = 0
 
         try:
             while True:
@@ -118,15 +130,40 @@ class SMAStar(SearchAlgorithm):
                     result.solution_actions = self._reconstruct(nodes, leaf.key)
                     break
 
+                generated_before = tracker.nodes_generated
                 self._expand(problem, nodes, leaf, tracker, counter)
                 nodes_expanded += 1
+                generated_count_epoch += tracker.nodes_generated - generated_before
 
-                while len(nodes) > memory_limit_nodes:
+                while len(nodes) > b_ram:
                     if self._prune_worst_leaf(nodes, root.key):
                         nodes_collapsed += 1
+                        collapsed_count_epoch += 1
                     else:
                         result.memory_limit_reached = True
                         break
+                if result.memory_limit_reached:
+                    break
+
+                if generated_count_epoch >= max(1, limits.epoch_generated_nodes):
+                    collapse_ratio = collapsed_count_epoch / max(generated_count_epoch, 1)
+                    if collapse_ratio > 0.50:
+                        b_ram = min(2 * b_ram, b_ram_max)
+                        number_of_ram_increases += 1
+                    elif collapse_ratio < 0.10:
+                        b_ram = max(b_ram // 2, b_ram_min)
+                        number_of_ram_decreases += 1
+                        while len(nodes) > b_ram:
+                            if self._prune_worst_leaf(nodes, root.key):
+                                nodes_collapsed += 1
+                            else:
+                                result.memory_limit_reached = True
+                                break
+                    collapsed_count_epoch = 0
+                    generated_count_epoch = 0
+                    ram_capacity_peak = max(ram_capacity_peak, b_ram)
+                    ram_capacity_min = min(ram_capacity_min, b_ram)
+
                 if result.memory_limit_reached:
                     break
 
@@ -150,23 +187,22 @@ class SMAStar(SearchAlgorithm):
         result.max_depth_reached = (
             len(result.solution_actions) if result.success else max((n.depth for n in nodes.values()), default=0)
         )
-        result.reexpansions = 0  # SMA* re-expands forgotten nodes; not separately tracked in this simplification
+        result.reexpansions = 0
         result.nodes_collapsed = nodes_collapsed
-        result.ram_capacity_initial = memory_limit_nodes
-        result.ram_capacity_final = memory_limit_nodes
-        result.ram_capacity_peak = memory_limit_nodes
-        result.ram_capacity_min = memory_limit_nodes
+        result.ram_capacity_initial = min(max(limits.dynamic_initial_ram_nodes, b_ram_min), b_ram_max)
+        result.ram_capacity_final = b_ram
+        result.ram_capacity_peak = ram_capacity_peak
+        result.ram_capacity_min = ram_capacity_min
+        result.number_of_ram_increases = number_of_ram_increases
+        result.number_of_ram_decreases = number_of_ram_decreases
         return result
 
     @staticmethod
     def _select_best_leaf(nodes: Dict[Any, _Node]) -> Optional[_Node]:
-        best: Optional[_Node] = None
-        for node in nodes.values():
-            if not node.is_leaf() or node.dead_end:
-                continue
-            if best is None or node.selection_f() < best.selection_f():
-                best = node
-        return best
+        leaves = [n for n in nodes.values() if n.is_leaf() and not n.dead_end]
+        if not leaves:
+            return None
+        return min(leaves, key=_best_score)
 
     def _expand(
         self,
@@ -180,10 +216,8 @@ class SMAStar(SearchAlgorithm):
         for action, next_state, cost in problem.successors(leaf.state):
             next_key = problem.state_key(next_state)
             if next_key == leaf.parent_key:
-                continue  # avoid the trivial immediate-parent cycle
+                continue
             if next_key in nodes:
-                # State already has a node elsewhere in the tree; see module
-                # docstring limitation #1 (no reparenting on rediscovery).
                 continue
             new_g = leaf.g + cost
             base_f = max(new_g + problem.heuristic(next_state), leaf.base_f)
@@ -202,27 +236,14 @@ class SMAStar(SearchAlgorithm):
             tracker.nodes_generated += 1
             new_child_added = True
         if not new_child_added:
-            # No new node could be added (dead end, or every successor was a
-            # duplicate of a node already in memory) -- never reselect this leaf.
             leaf.dead_end = True
 
     @staticmethod
     def _prune_worst_leaf(nodes: Dict[Any, _Node], root_key: Any) -> bool:
-        """Delete the worst leaf to free memory. Returns False if nothing could be pruned."""
-        worst: Optional[_Node] = None
-        for node in nodes.values():
-            if node.key == root_key or not node.is_leaf():
-                continue
-            if worst is None:
-                worst = node
-                continue
-            if node.selection_f() > worst.selection_f() or (
-                node.selection_f() == worst.selection_f() and node.order > worst.order
-            ):
-                worst = node
-        if worst is None:
+        leaves = [n for n in nodes.values() if n.key != root_key and n.is_leaf()]
+        if not leaves:
             return False
-
+        worst = min(leaves, key=_worst_score)
         del nodes[worst.key]
         parent = nodes.get(worst.parent_key)
         if parent is not None:

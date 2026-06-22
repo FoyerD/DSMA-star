@@ -21,6 +21,7 @@ def run_benchmark(
         for algorithm in algorithms:
             result = algorithm.search(problem, limits)
             result.instance_id = instance.instance_id
+            result.instance_difficulty = instance.difficulty
             result.domain_name = getattr(problem, "name", result.domain_name)
             results.append(result)
     return results

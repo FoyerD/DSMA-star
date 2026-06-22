@@ -7,12 +7,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from domains.base import SearchProblem
 
-from ._run_utils import NodeLimitError, RunTracker, TimeoutError_
+from ._run_utils import MemoryLimitError, NodeLimitError, RunTracker
 from .base import SearchAlgorithm, SearchLimits, SearchResult
 
 
 class AStar(SearchAlgorithm):
-    """Standard A* using f = g + h, optimal when the heuristic is admissible."""
+    """Standard graph-search A* using f = g + h, optimal when h is admissible."""
 
     name = "astar"
 
@@ -22,19 +22,20 @@ class AStar(SearchAlgorithm):
             domain_name=getattr(problem, "name", "unknown"),
             instance_id="",
         )
-        tracker = RunTracker.start(limits.timeout_seconds, limits.max_nodes)
+        tracker = RunTracker.start(limits.max_nodes, limits.max_memory_mb)
 
         start = problem.initial_state
-        start_key = problem.state_hash(start)
+        start_key = problem.state_key(start)
         counter = itertools.count()  # tie-breaker so heap never compares states directly
 
-        # open_heap entries: (f, tie_break, g, state)
-        open_heap: List[Tuple[float, int, float, Any]] = []
-        heapq.heappush(open_heap, (problem.heuristic(start), next(counter), 0.0, start))
+        # open_heap entries: (f, -g, tie_break, g, state). Ties on f prefer
+        # larger g (deeper / more-expanded-looking nodes), as specified.
+        open_heap: List[Tuple[float, float, int, float, Any]] = []
+        heapq.heappush(open_heap, (problem.heuristic(start), -0.0, next(counter), 0.0, start))
         tracker.nodes_generated = 1
 
         best_g: Dict[Any, float] = {start_key: 0.0}
-        came_from: Dict[Any, Tuple[Any, Any]] = {}  # key -> (action, parent_state)
+        came_from: Dict[Any, Tuple[Any, Any, Any]] = {}  # key -> (action, parent_state, parent_key)
         closed: set = set()
 
         nodes_expanded = 0
@@ -43,11 +44,10 @@ class AStar(SearchAlgorithm):
 
         try:
             while open_heap:
-                tracker.check_timeout()
-                tracker.check_node_limit()
+                tracker.check_limits()
 
-                f, _, g, state = heapq.heappop(open_heap)
-                key = problem.state_hash(state)
+                f, _neg_g, _tie, g, state = heapq.heappop(open_heap)
+                key = problem.state_key(state)
 
                 if g > best_g.get(key, float("inf")):
                     continue  # stale entry, a better path was already found
@@ -64,21 +64,22 @@ class AStar(SearchAlgorithm):
                     break
 
                 for action, next_state, cost in problem.successors(state):
-                    next_key = problem.state_hash(next_state)
+                    next_key = problem.state_key(next_state)
                     new_g = g + cost
                     if new_g < best_g.get(next_key, float("inf")):
                         best_g[next_key] = new_g
                         came_from[next_key] = (action, state, key)
                         h = problem.heuristic(next_state)
-                        heapq.heappush(open_heap, (new_g + h, next(counter), new_g, next_state))
+                        heapq.heappush(open_heap, (new_g + h, -new_g, next(counter), new_g, next_state))
                         tracker.nodes_generated += 1
 
                 max_frontier_size = max(max_frontier_size, len(open_heap))
-        except TimeoutError_:
-            result.timeout = True
         except NodeLimitError:
+            result.node_limit_reached = True
+            result.error_message = "max_nodes safety valve exceeded"
+        except MemoryLimitError:
             result.memory_limit_reached = True
-            result.error_message = "max_nodes exceeded"
+            result.error_message = "real memory ceiling exceeded"
         finally:
             result.peak_memory_mb = tracker.stop()
             if result.peak_memory_mb > limits.max_memory_mb:
