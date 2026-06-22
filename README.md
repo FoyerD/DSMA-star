@@ -373,3 +373,4 @@ booleans/numbers/blanks, optimality-gap computation, every summary/comparison
 CSV (including the header-only/empty-input and zero-denominator-ratio edge
 cases), the winners/notes logic, and an end-to-end `analyze_results()` run
 that checks all six output files are produced.
+
