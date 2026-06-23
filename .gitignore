@@ -10,6 +10,7 @@ __pycache__/
 *.so
 outs/
 sai.sbatch
+opencode.json
 
 # Distribution / packaging
 .Python
