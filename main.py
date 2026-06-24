@@ -93,7 +93,7 @@ def build_instances(args: argparse.Namespace) -> List[NamedInstance]:
         )
 
     if args.domain in ("sokoban", "all"):
-        instances.extend(generate_sokoban_instances(("easy", "medium"))
+        instances.extend(generate_sokoban_instances(("easy", "medium")))
 
     return instances
 
