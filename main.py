@@ -132,9 +132,9 @@ def main() -> None:
 
     algorithms = [
         AStar(),
+        DynamicSMACollapse(),
         SMAStar(),
         ILBFS(),
-        DynamicSMACollapse(),
         TwoLevelDynamicSMA(keep_disk=args.keep_disk, disk_dir=output_dir / "disk_cache"),
     ]
 
