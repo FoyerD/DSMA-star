@@ -82,6 +82,7 @@ def parse_args() -> argparse.Namespace:
 def build_instances(args: argparse.Namespace) -> List[NamedInstance]:
     instances: List[NamedInstance] = []
 
+
     if args.domain in ("puzzle", "all"):
         instances.extend(
             generate_puzzle_instances(
