@@ -27,7 +27,7 @@ class SearchLimits:
     max_ram_nodes: int = 200_000
 
     # SMA*: max number of nodes it may keep in memory at once.
-    sma_memory_limit_nodes: int = 5_000
+    sma_memory_limit_nodes: int = 50_000
 
     # Dynamic SMA*-Collapse: dynamic RAM capacity bounds and adaptation epoch.
     dynamic_initial_ram_nodes: int = 2_000
