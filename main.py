@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override --max-memory-fraction with an absolute MB ceiling instead.",
     )
-    parser.add_argument("--sma-memory", type=int, default=5_000)
+    parser.add_argument("--sma-memory", type=int, default=50_000)
     parser.add_argument("--dynamic-initial-ram", type=int, default=2_000)
     parser.add_argument("--dynamic-min-ram", type=int, default=500)
     parser.add_argument("--dynamic-max-ram", type=int, default=10_000)
@@ -93,7 +93,7 @@ def build_instances(args: argparse.Namespace) -> List[NamedInstance]:
         )
 
     if args.domain in ("sokoban", "all"):
-        instances.extend(generate_sokoban_instances())
+        instances.extend(generate_sokoban_instances(("easy", "medium"))
 
     return instances
 
