@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--domain", choices=["puzzle", "sokoban", "all"], default="all")
     parser.add_argument(
-        "--instances", type=int, default=5, help="Number of puzzle instances (Sokoban always uses its 3 handcrafted levels)."
+        "--instances", type=int, default=10, help="Number of puzzle instances (Sokoban always uses its 3 handcrafted levels)."
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output-dir", type=str, default="results")
@@ -135,7 +135,7 @@ def main() -> None:
         DynamicSMACollapse(),
         SMAStar(),
         ILBFS(),
-        TwoLevelDynamicSMA(keep_disk=args.keep_disk, disk_dir=output_dir / "disk_cache"),
+        # TwoLevelDynamicSMA(keep_disk=args.keep_disk, disk_dir=output_dir / "disk_cache"),
     ]
 
     instances = build_instances(args)
