@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set, Union
 
 from domains.base import SearchProblem
 
@@ -42,6 +42,19 @@ from ._run_utils import MemoryLimitError, NodeLimitError, RunTracker
 from .base import SearchAlgorithm, SearchLimits, SearchResult
 
 _INF = float("inf")
+
+DEFAULT_SMA_MEMORY_LIMIT_NODES = 50_000
+
+
+def normalize_memory_limits(value: Union[int, Iterable[int]]) -> List[int]:
+    """Coerce a single memory limit (or an iterable of them) into a list of ints.
+
+    Lets callers pass either one integer (`50_000`) or a list of them
+    (`[10_000, 25_000, 50_000]`) wherever a set of SMA* memory limits is expected.
+    """
+    if isinstance(value, int):
+        return [value]
+    return [int(v) for v in value]
 
 
 @dataclass
@@ -70,9 +83,17 @@ class _Node:
 
 
 class SMAStar(SearchAlgorithm):
-    """Simplified memory-bounded A*. See module docstring for limitations."""
+    """Simplified memory-bounded A*. See module docstring for limitations.
 
-    name = "sma_star"
+    Each instance is bound to a single, fixed `memory_limit_nodes` -- to compare
+    SMA* under several memory budgets, construct one `SMAStar` instance per
+    budget (see `normalize_memory_limits`) rather than mutating one instance's
+    limit mid-run.
+    """
+
+    def __init__(self, memory_limit_nodes: int = DEFAULT_SMA_MEMORY_LIMIT_NODES) -> None:
+        self.memory_limit_nodes = memory_limit_nodes
+        self.name = f"SMA* (memory={memory_limit_nodes})"
 
     def search(self, problem: SearchProblem, limits: SearchLimits) -> SearchResult:
         result = SearchResult(
@@ -81,7 +102,7 @@ class SMAStar(SearchAlgorithm):
             instance_id="",
         )
         tracker = RunTracker.start(limits.max_nodes, limits.max_memory_mb)
-        memory_limit_nodes = max(2, limits.sma_memory_limit_nodes)
+        memory_limit_nodes = max(2, self.memory_limit_nodes)
         counter = itertools.count()
 
         start = problem.initial_state

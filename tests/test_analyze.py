@@ -2,6 +2,8 @@ import csv
 from pathlib import Path
 
 from benchmark.analyze import (
+    _is_sma_star_variant,
+    _sma_star_variant_names,
     add_optimality_gaps,
     analyze_results,
     compute_astar_reference,
@@ -9,6 +11,7 @@ from benchmark.analyze import (
     write_algorithm_summary,
     write_domain_algorithm_summary,
     write_instance_comparison,
+    write_markdown_summary,
     write_proposed_vs_baselines,
     write_winners_by_instance,
 )
@@ -308,6 +311,96 @@ def test_proposed_vs_baselines_handles_zero_denominator(tmp_path: Path):
     )
     assert comparison["baseline_success_rate"] is None
     assert comparison["runtime_ratio_proposed_over_baseline"] is None
+
+
+def test_is_sma_star_variant_matches_memory_named_and_legacy_labels():
+    assert _is_sma_star_variant("sma_star")  # legacy, pre-multi-memory label
+    assert _is_sma_star_variant("SMA* (memory=10000)")
+    assert _is_sma_star_variant("SMA* (memory=50000)")
+    assert not _is_sma_star_variant("dynamic_sma_collapse")
+    assert not _is_sma_star_variant("SMA*")  # missing the "(memory=N)" suffix
+
+
+def test_sma_star_variant_names_dedupes_and_sorts():
+    names = ["astar", "SMA* (memory=50000)", "SMA* (memory=10000)", "ilbfs", "SMA* (memory=10000)"]
+    assert _sma_star_variant_names(names) == ["SMA* (memory=10000)", "SMA* (memory=50000)"]
+
+
+def _write_multi_memory_sma_csv(path: Path) -> None:
+    rows = [
+        _row(
+            algorithm_name="astar", domain_name="n_puzzle", instance_id="easy_1", instance_difficulty="depth_10",
+            success="True", solution_cost="10", solution_depth="10", runtime_seconds="0.01", peak_memory_mb="0.5",
+            nodes_expanded="20", nodes_generated="30",
+        ),
+        _row(
+            algorithm_name="SMA* (memory=10000)", domain_name="n_puzzle", instance_id="easy_1",
+            instance_difficulty="depth_10", success="True", solution_cost="12", solution_depth="12",
+            runtime_seconds="0.02", peak_memory_mb="0.3", nodes_expanded="25", nodes_generated="35",
+        ),
+        _row(
+            algorithm_name="SMA* (memory=50000)", domain_name="n_puzzle", instance_id="easy_1",
+            instance_difficulty="depth_10", success="True", solution_cost="10", solution_depth="10",
+            runtime_seconds="0.04", peak_memory_mb="0.6", nodes_expanded="18", nodes_generated="27",
+        ),
+        _row(
+            algorithm_name="dynamic_sma_collapse", domain_name="n_puzzle", instance_id="easy_1",
+            instance_difficulty="depth_10", success="True", solution_cost="10", solution_depth="10",
+            runtime_seconds="0.03", peak_memory_mb="0.4", nodes_expanded="40", nodes_generated="100",
+        ),
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=_HEADER)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def test_multi_memory_sma_star_runs_are_grouped_as_distinct_algorithms(tmp_path: Path):
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_multi_memory_sma_csv(csv_path)
+    results = load_results(csv_path)
+    add_optimality_gaps(results)
+
+    summary_rows = write_algorithm_summary(results, tmp_path / "analysis")
+    summary_names = {r["algorithm_name"] for r in summary_rows}
+    assert "SMA* (memory=10000)" in summary_names
+    assert "SMA* (memory=50000)" in summary_names
+
+    sma_10k = next(r for r in summary_rows if r["algorithm_name"] == "SMA* (memory=10000)")
+    sma_50k = next(r for r in summary_rows if r["algorithm_name"] == "SMA* (memory=50000)")
+    assert sma_10k["total_runs"] == 1
+    assert sma_50k["total_runs"] == 1
+    assert sma_10k["avg_peak_memory_mb"] != sma_50k["avg_peak_memory_mb"]
+
+
+def test_proposed_vs_baselines_expands_sma_star_placeholder_per_memory_variant(tmp_path: Path):
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_multi_memory_sma_csv(csv_path)
+    results = load_results(csv_path)
+    add_optimality_gaps(results)
+
+    rows = write_proposed_vs_baselines(results, tmp_path / "analysis")
+    pair_names = {(r["proposed_algorithm"], r["baseline_algorithm"]) for r in rows}
+    # Both SMA* memory variants get their own baseline comparison row, instead
+    # of a single opaque "sma_star" row that wouldn't match either variant.
+    assert ("dynamic_sma_collapse", "SMA* (memory=10000)") in pair_names
+    assert ("dynamic_sma_collapse", "SMA* (memory=50000)") in pair_names
+    assert ("dynamic_sma_collapse", "sma_star") not in pair_names
+
+
+def test_markdown_summary_lists_each_sma_star_memory_variant(tmp_path: Path):
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_multi_memory_sma_csv(csv_path)
+    results = load_results(csv_path)
+    add_optimality_gaps(results)
+
+    out_dir = tmp_path / "analysis"
+    write_markdown_summary(results, out_dir)
+    markdown = (out_dir / "human_readable_summary.md").read_text(encoding="utf-8")
+    assert "SMA* (memory=10000)" in markdown
+    assert "SMA* (memory=50000)" in markdown
 
 
 def test_analyze_results_end_to_end_produces_all_files(tmp_path: Path):

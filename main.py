@@ -18,8 +18,8 @@ from typing import List
 
 import psutil
 
-from algorithms import AStar, DynamicSMACollapse, ILBFS, SMAStar, TwoLevelDynamicSMA
-from algorithms.base import SearchLimits
+from algorithms import AStar, DynamicSMACollapse, ILBFS, SMAStar, TwoLevelDynamicSMA, normalize_memory_limits
+from algorithms.base import SearchAlgorithm, SearchLimits
 from benchmark.analyze import analyze_results
 from benchmark.instance_generators import NamedInstance, generate_puzzle_instances, generate_sokoban_instances
 from benchmark.metrics import aggregate_by_domain_and_algorithm
@@ -57,7 +57,17 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override --max-memory-fraction with an absolute MB ceiling instead.",
     )
-    parser.add_argument("--sma-memory", type=int, default=50_000)
+    parser.add_argument(
+        "--sma-memory",
+        type=int,
+        nargs="+",
+        default=[50_000],
+        help=(
+            "Memory limit(s), in max resident nodes, for SMA*. Provide multiple values "
+            "(e.g. --sma-memory 10000 25000 50000) to run SMA* once per memory limit, "
+            "each as its own independent algorithm instance."
+        ),
+    )
     parser.add_argument("--dynamic-initial-ram", type=int, default=2_000)
     parser.add_argument("--dynamic-min-ram", type=int, default=500)
     parser.add_argument("--dynamic-max-ram", type=int, default=10_000)
@@ -99,6 +109,17 @@ def build_instances(args: argparse.Namespace) -> List[NamedInstance]:
     return instances
 
 
+def build_algorithms(args: argparse.Namespace) -> List[SearchAlgorithm]:
+    sma_memory_limits = normalize_memory_limits(args.sma_memory)
+    return [
+        AStar(),
+        DynamicSMACollapse(),
+        *[SMAStar(memory_limit_nodes=memory_limit) for memory_limit in sma_memory_limits],
+        ILBFS(),
+        # TwoLevelDynamicSMA(keep_disk=args.keep_disk, disk_dir=output_dir / "disk_cache"),
+    ]
+
+
 def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir)
@@ -119,7 +140,6 @@ def main() -> None:
         max_memory_mb=max_memory_mb,
         max_nodes=args.max_nodes,
         max_ram_nodes=args.max_nodes,
-        sma_memory_limit_nodes=args.sma_memory,
         dynamic_initial_ram_nodes=args.dynamic_initial_ram,
         dynamic_min_ram_nodes=args.dynamic_min_ram,
         dynamic_max_ram_nodes=args.dynamic_max_ram,
@@ -130,13 +150,7 @@ def main() -> None:
         epoch_generated_nodes=args.epoch_generated_nodes,
     )
 
-    algorithms = [
-        AStar(),
-        DynamicSMACollapse(),
-        SMAStar(),
-        ILBFS(),
-        # TwoLevelDynamicSMA(keep_disk=args.keep_disk, disk_dir=output_dir / "disk_cache"),
-    ]
+    algorithms = build_algorithms(args)
 
     instances = build_instances(args)
     print(f"Running {len(algorithms)} algorithms on {len(instances)} instances...")

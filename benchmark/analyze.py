@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 Row = Dict[str, Any]
 
@@ -61,18 +62,34 @@ _BOOL_FIELDS = ("success", "node_limit_reached", "memory_limit_reached", "stack_
 
 ASTAR_NAME = "astar"
 PROPOSED_ALGORITHMS = ("dynamic_sma_collapse", "two_level_dynamic_sma")
+# "sma_star" is a legacy placeholder covering every fixed-memory SMA* run: a
+# benchmark can contain several SMA* instances (one per --sma-memory value),
+# each named "SMA* (memory=<N>)" -- see `_is_sma_star_variant`/`_sma_star_variant_names`.
 BASELINE_ALGORITHMS = ("astar", "sma_star", "ilbfs")
 DISPLAY_NAMES = {
     "astar": "A*",
-    "sma_star": "SMA*",
+    "sma_star": "SMA*",  # legacy label for CSVs written before per-memory SMA* names existed
     "ilbfs": "ILBFS",
     "dynamic_sma_collapse": "Dynamic SMA*-Collapse",
     "two_level_dynamic_sma": "Two-Level Dynamic SMA*",
 }
 
+# Matches names like "SMA* (memory=10000)" produced by one SMA* instance per
+# --sma-memory value. "sma_star" itself is also accepted for old CSVs written
+# before SMA* runs were split out by memory limit.
+_SMA_STAR_VARIANT_RE = re.compile(r"^SMA\* \(memory=\d+\)$")
+
 
 def _display(name: str) -> str:
     return DISPLAY_NAMES.get(name, name)
+
+
+def _is_sma_star_variant(name: str) -> bool:
+    return name == "sma_star" or bool(_SMA_STAR_VARIANT_RE.match(name))
+
+
+def _sma_star_variant_names(names: Iterable[str]) -> List[str]:
+    return sorted({name for name in names if _is_sma_star_variant(name)})
 
 
 # --------------------------------------------------------------------------
@@ -527,6 +544,22 @@ _COMPARISON_PAIRS = [
     ("two_level_dynamic_sma", "dynamic_sma_collapse"),
 ]
 
+
+def _expand_comparison_pairs(
+    pairs: List[Tuple[str, str]], available_algorithm_names: Iterable[str]
+) -> List[Tuple[str, str]]:
+    """Expand the "sma_star" placeholder baseline into one pair per SMA* variant
+    actually present (e.g. "SMA* (memory=10000)", "SMA* (memory=50000)")."""
+    sma_variants = _sma_star_variant_names(available_algorithm_names)
+    expanded: List[Tuple[str, str]] = []
+    for proposed, baseline in pairs:
+        if baseline == "sma_star":
+            expanded.extend((proposed, variant) for variant in sma_variants)
+        else:
+            expanded.append((proposed, baseline))
+    return expanded
+
+
 _EPSILON = 1e-9
 
 
@@ -576,7 +609,7 @@ def write_proposed_vs_baselines(results: List[Row], out_dir: Path) -> List[Dict[
         for row in group_rows:
             by_algo[row["algorithm_name"]].append(row)
 
-        for proposed, baseline in _COMPARISON_PAIRS:
+        for proposed, baseline in _expand_comparison_pairs(_COMPARISON_PAIRS, by_algo.keys()):
             stats_p = _aggregate(by_algo.get(proposed, []))
             stats_b = _aggregate(by_algo.get(baseline, []))
 
@@ -705,17 +738,24 @@ def write_markdown_summary(
         return _aggregate([r for r in rows if r["algorithm_name"] == name])
 
     dyn_stats = _stats_for("dynamic_sma_collapse", results)
-    sma_stats = _stats_for("sma_star", results)
+    sma_variant_names = _sma_star_variant_names(r["algorithm_name"] for r in results)
     lines.append("## Did Dynamic SMA*-Collapse improve over fixed SMA*?")
     lines.append("")
     lines.append(
         f"Dynamic SMA*-Collapse: success {_fmt_pct(dyn_stats['success_rate'])}, "
         f"avg runtime (solved) {_fmt(dyn_stats['avg_runtime_s_solved'])}s, "
-        f"avg peak memory {_fmt(dyn_stats['avg_peak_memory_mb'])} MB.  \n"
-        f"Fixed SMA*: success {_fmt_pct(sma_stats['success_rate'])}, "
-        f"avg runtime (solved) {_fmt(sma_stats['avg_runtime_s_solved'])}s, "
-        f"avg peak memory {_fmt(sma_stats['avg_peak_memory_mb'])} MB."
+        f"avg peak memory {_fmt(dyn_stats['avg_peak_memory_mb'])} MB."
     )
+    if not sma_variant_names:
+        lines.append("_No fixed SMA* runs found in this dataset._")
+    else:
+        for variant in sma_variant_names:
+            variant_stats = _stats_for(variant, results)
+            lines.append(
+                f"Fixed {_display(variant)}: success {_fmt_pct(variant_stats['success_rate'])}, "
+                f"avg runtime (solved) {_fmt(variant_stats['avg_runtime_s_solved'])}s, "
+                f"avg peak memory {_fmt(variant_stats['avg_peak_memory_mb'])} MB.  "
+            )
     lines.append("")
 
     two_level_stats = _stats_for("two_level_dynamic_sma", results)

@@ -26,8 +26,9 @@ class SearchLimits:
     # Generic RAM-node budget some algorithms may use as a soft cap (currently advisory).
     max_ram_nodes: int = 200_000
 
-    # SMA*: max number of nodes it may keep in memory at once.
-    sma_memory_limit_nodes: int = 50_000
+    # SMA*'s memory limit is configured per-instance (see `SMAStar.__init__`),
+    # not here, since a single benchmark run may include several SMA* instances
+    # each bound to a different memory budget.
 
     # Dynamic SMA*-Collapse: dynamic RAM capacity bounds and adaptation epoch.
     dynamic_initial_ram_nodes: int = 2_000
