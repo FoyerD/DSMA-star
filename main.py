@@ -81,9 +81,9 @@ def parse_args() -> argparse.Namespace:
             "each as its own independent algorithm instance."
         ),
     )
-    parser.add_argument("--dynamic-initial-ram", type=int, default=2_000)
+    parser.add_argument("--dynamic-initial-ram", type=int, default=5_000)
     parser.add_argument("--dynamic-min-ram", type=int, default=500)
-    parser.add_argument("--dynamic-max-ram", type=int, default=10_000)
+    parser.add_argument("--dynamic-max-ram", type=int, default=20_000)
     parser.add_argument("--two-level-initial-ram", type=int, default=2_000)
     parser.add_argument("--two-level-min-ram", type=int, default=500)
     parser.add_argument("--two-level-max-ram", type=int, default=10_000)
