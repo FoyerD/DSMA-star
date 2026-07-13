@@ -1,6 +1,12 @@
 from .instance_generators import NamedInstance, generate_puzzle_instances, generate_sokoban_instances
 from .metrics import AggregateMetrics, aggregate_by_domain_and_algorithm
-from .results import print_summary_tables, save_results_csv, save_results_json
+from .results import (
+    print_summary_tables,
+    save_results_csv,
+    save_results_json,
+    save_summary_csv,
+    save_summary_json,
+)
 from .runner import run_benchmark
 
 __all__ = [
@@ -12,5 +18,7 @@ __all__ = [
     "print_summary_tables",
     "save_results_csv",
     "save_results_json",
+    "save_summary_csv",
+    "save_summary_json",
     "run_benchmark",
 ]

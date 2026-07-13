@@ -17,14 +17,19 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python main.py --domain all --instances 5 --seed 0
+python main.py --domain all --seeds 0 1 2 3 4
 ```
 
-This runs all five algorithms on both domains, prints summary tables grouped
-by domain/difficulty/algorithm, writes detailed per-run results to
-`results/benchmark_results.csv` and `results/benchmark_results.json`, and
-then automatically analyzes those results into `results/analysis/` (see
-**Results analysis** below).
+This runs all five algorithms on both domains. For the n-puzzle domain, one
+instance is generated per `(scramble depth, seed)` pair, so every algorithm is
+evaluated across all of `--seeds` at each scramble depth. It prints summary
+tables grouped by domain/difficulty/algorithm — with the seed-varying metrics
+(runtime, memory, nodes expanded/generated) shown as `mean(±std)`, using the
+sample standard deviation across seeds — writes detailed per-run results to
+`results/benchmark_results.csv`/`.json`, writes the aggregated mean/std
+summary to `results/benchmark_summary.csv`/`.json`, and then automatically
+analyzes the per-run results into `results/analysis/` (see **Results
+analysis** below).
 
 ### No timeout
 
@@ -53,8 +58,8 @@ instead of consuming the whole machine's RAM.
 More examples:
 
 ```bash
-# 15-puzzle only, a handful of scramble depths, for a quick look
-python main.py --domain puzzle --instances 3 --puzzle-size 4 --scramble-depths 10 20 30
+# 15-puzzle only, a handful of scramble depths, three seeds per depth, for a quick look
+python main.py --domain puzzle --seeds 0 1 2 --puzzle-size 4 --scramble-depths 10 20 30
 
 # Sokoban only (always runs the 3 handcrafted easy/medium/hard levels);
 # cap real memory at 2 GB so a run that can't be solved fails fast
@@ -78,11 +83,10 @@ python -m benchmark.analyze --input results/benchmark_results.csv --output-dir r
 | Flag | Default | Description |
 |---|---|---|
 | `--domain` | `all` | `puzzle`, `sokoban`, or `all` |
-| `--instances` | `5` | Number of generated n-puzzle instances (Sokoban always runs its 3 fixed handcrafted levels) |
-| `--seed` | `0` | RNG seed for reproducible instance generation |
+| `--seeds` | `0` | List of RNG seeds; one n-puzzle instance is generated per (scramble depth, seed) pair, and results are aggregated as mean/std across seeds (Sokoban always runs its 3 fixed handcrafted levels, seed-independent) |
 | `--output-dir` | `results` | Where CSV/JSON results (and the disk-cache dir) are written |
 | `--puzzle-size` | `4` | N-puzzle board size (`4` = 15-puzzle, `3` = 8-puzzle) |
-| `--scramble-depths` | `10 20 30 40 50` | Scramble depths cycled through across puzzle instances |
+| `--scramble-depths` | `10 20 30 40 50` | Scramble depths; every depth is run with every seed in `--seeds` |
 | `--max-nodes` | `5000000` | Generous infinite-loop safety valve; not the binding constraint in normal use |
 | `--max-memory-fraction` | `0.8` | Real memory ceiling as a fraction of this machine's total RAM (checked against actual process RSS) |
 | `--max-memory-mb` | none | Override `--max-memory-fraction` with an absolute MB ceiling instead |

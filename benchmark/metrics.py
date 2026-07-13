@@ -1,6 +1,7 @@
 """Aggregate metrics computation over a collection of SearchResult objects."""
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -10,7 +11,13 @@ from algorithms.base import SearchResult
 
 @dataclass
 class AggregateMetrics:
-    """Summary statistics for one (domain, difficulty, algorithm) group of runs."""
+    """Summary statistics for one (domain, difficulty, algorithm) group of runs --
+    i.e. one algorithm evaluated across every seed at a given scramble depth.
+
+    Every metric that varies per seed is reported as a mean/std pair (`avg_*` /
+    `std_*`), using the sample standard deviation (N-1 denominator). `std_*` is
+    0.0 (or None, for the Optional metrics) when fewer than two runs contributed.
+    """
 
     domain_name: str
     difficulty: str
@@ -21,22 +28,42 @@ class AggregateMetrics:
     memory_limit_rate: float = 0.0
     stack_exhausted_rate: float = 0.0
     avg_runtime_seconds_solved: float = 0.0
+    std_runtime_seconds_solved: float = 0.0
     avg_peak_memory_mb: float = 0.0
+    std_peak_memory_mb: float = 0.0
     avg_nodes_expanded: float = 0.0
+    std_nodes_expanded: float = 0.0
     avg_nodes_generated: float = 0.0
+    std_nodes_generated: float = 0.0
     avg_max_frontier_size: float = 0.0
+    std_max_frontier_size: float = 0.0
     avg_solution_cost: Optional[float] = None
+    std_solution_cost: Optional[float] = None
     avg_solution_depth: Optional[float] = None
+    std_solution_depth: Optional[float] = None
     avg_optimality_gap: Optional[float] = None
+    std_optimality_gap: Optional[float] = None
     total_nodes_collapsed: int = 0
     total_nodes_spilled_to_disk: int = 0
     total_nodes_loaded_from_disk: int = 0
     avg_disk_io_time_seconds: float = 0.0
+    std_disk_io_time_seconds: float = 0.0
     avg_disk_peak_nodes: float = 0.0
+    std_disk_peak_nodes: float = 0.0
 
 
 def _mean(values: List[float]) -> float:
     return sum(values) / len(values) if values else 0.0
+
+
+def _std(values: List[float]) -> float:
+    """Sample standard deviation (N-1 denominator); 0.0 with fewer than 2 samples."""
+    return statistics.stdev(values) if len(values) >= 2 else 0.0
+
+
+def _std_opt(values: List[float]) -> Optional[float]:
+    """Same as `_std`, but None (not 0.0) when there's nothing to report."""
+    return statistics.stdev(values) if len(values) >= 2 else None
 
 
 def compute_optimal_costs(
@@ -70,6 +97,16 @@ def aggregate_by_domain_and_algorithm(
             if opt is not None and opt > 0 and r.solution_cost is not None:
                 gaps.append((r.solution_cost - opt) / opt)
 
+        runtimes_solved = [r.runtime_seconds for r in successes]
+        peak_mem = [r.peak_memory_mb for r in group]
+        nodes_expanded = [r.nodes_expanded for r in group]
+        nodes_generated = [r.nodes_generated for r in group]
+        max_frontier = [r.max_frontier_size for r in group]
+        costs_solved = [r.solution_cost for r in successes if r.solution_cost is not None]
+        depths_solved = [r.solution_depth for r in successes if r.solution_depth is not None]
+        disk_io = [r.disk_io_time_seconds for r in group]
+        disk_peak = [r.disk_peak_nodes for r in group]
+
         summaries.append(
             AggregateMetrics(
                 domain_name=domain_name,
@@ -80,20 +117,29 @@ def aggregate_by_domain_and_algorithm(
                 node_limit_rate=sum(1 for r in group if r.node_limit_reached) / n if n else 0.0,
                 memory_limit_rate=sum(1 for r in group if r.memory_limit_reached) / n if n else 0.0,
                 stack_exhausted_rate=sum(1 for r in group if r.stack_exhausted) / n if n else 0.0,
-                avg_runtime_seconds_solved=_mean([r.runtime_seconds for r in successes]),
-                avg_peak_memory_mb=_mean([r.peak_memory_mb for r in group]),
-                avg_nodes_expanded=_mean([r.nodes_expanded for r in group]),
-                avg_nodes_generated=_mean([r.nodes_generated for r in group]),
-                avg_max_frontier_size=_mean([r.max_frontier_size for r in group]),
-                avg_solution_cost=_mean([r.solution_cost for r in successes if r.solution_cost is not None]) or None,
-                avg_solution_depth=_mean([r.solution_depth for r in successes if r.solution_depth is not None])
-                or None,
+                avg_runtime_seconds_solved=_mean(runtimes_solved),
+                std_runtime_seconds_solved=_std(runtimes_solved),
+                avg_peak_memory_mb=_mean(peak_mem),
+                std_peak_memory_mb=_std(peak_mem),
+                avg_nodes_expanded=_mean(nodes_expanded),
+                std_nodes_expanded=_std(nodes_expanded),
+                avg_nodes_generated=_mean(nodes_generated),
+                std_nodes_generated=_std(nodes_generated),
+                avg_max_frontier_size=_mean(max_frontier),
+                std_max_frontier_size=_std(max_frontier),
+                avg_solution_cost=_mean(costs_solved) or None,
+                std_solution_cost=_std_opt(costs_solved),
+                avg_solution_depth=_mean(depths_solved) or None,
+                std_solution_depth=_std_opt(depths_solved),
                 avg_optimality_gap=_mean(gaps) if gaps else None,
+                std_optimality_gap=_std_opt(gaps),
                 total_nodes_collapsed=sum(r.nodes_collapsed for r in group),
                 total_nodes_spilled_to_disk=sum(r.nodes_spilled_to_disk for r in group),
                 total_nodes_loaded_from_disk=sum(r.nodes_loaded_from_disk for r in group),
-                avg_disk_io_time_seconds=_mean([r.disk_io_time_seconds for r in group]),
-                avg_disk_peak_nodes=_mean([r.disk_peak_nodes for r in group]),
+                avg_disk_io_time_seconds=_mean(disk_io),
+                std_disk_io_time_seconds=_std(disk_io),
+                avg_disk_peak_nodes=_mean(disk_peak),
+                std_disk_peak_nodes=_std(disk_peak),
             )
         )
     return summaries

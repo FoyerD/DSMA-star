@@ -45,13 +45,40 @@ def save_results_json(results: List[SearchResult], path: Path) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+_SUMMARY_FIELDS = [f.name for f in dataclasses.fields(AggregateMetrics)]
+
+
+def save_summary_csv(summaries: List[AggregateMetrics], path: Path) -> None:
+    """Write the per-(domain, difficulty, algorithm) mean/std summary to CSV."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=_SUMMARY_FIELDS)
+        writer.writeheader()
+        for s in summaries:
+            writer.writerow(dataclasses.asdict(s))
+
+
+def save_summary_json(summaries: List[AggregateMetrics], path: Path) -> None:
+    """Write the per-(domain, difficulty, algorithm) mean/std summary to JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [dataclasses.asdict(s) for s in summaries]
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _fmt_stat(mean: float, std: float, digits: int) -> str:
+    return f"{mean:.{digits}f}(±{std:.{digits}f})"
+
+
 def print_summary_tables(summaries: List[AggregateMetrics]) -> None:
+    """Print one table per (domain, difficulty) group; each cell that varies per
+    seed is shown as `mean(±std)`, using the sample standard deviation across the
+    seeds run at that scramble depth."""
     groups = sorted({(s.domain_name, s.difficulty) for s in summaries})
     for domain, difficulty in groups:
         print(f"\n=== Domain: {domain} | Difficulty: {difficulty} ===")
         header = (
             f"{'algorithm':<22}{'n':>4}{'success%':>10}{'node-lim%':>10}{'mem-lim%':>10}{'stack-ex%':>10}"
-            f"{'avg_t_solved(s)':>16}{'avg_mem(MB)':>12}{'avg_exp':>10}{'avg_gen':>10}"
+            f"{'time(s) solved':>20}{'peak mem(MB)':>20}{'nodes expanded':>20}{'nodes generated':>20}"
             f"{'avg_gap':>9}{'collapsed':>10}{'spilled':>9}{'loaded':>8}"
         )
         print(header)
@@ -64,7 +91,10 @@ def print_summary_tables(summaries: List[AggregateMetrics]) -> None:
                 f"{s.algorithm_name:<22}{s.num_instances:>4}"
                 f"{s.success_rate * 100:>9.1f}%{s.node_limit_rate * 100:>9.1f}%{s.memory_limit_rate * 100:>9.1f}%"
                 f"{s.stack_exhausted_rate * 100:>9.1f}%"
-                f"{s.avg_runtime_seconds_solved:>16.3f}{s.avg_peak_memory_mb:>12.2f}"
-                f"{s.avg_nodes_expanded:>10.1f}{s.avg_nodes_generated:>10.1f}{gap_str:>9}"
+                f"{_fmt_stat(s.avg_runtime_seconds_solved, s.std_runtime_seconds_solved, 3):>20}"
+                f"{_fmt_stat(s.avg_peak_memory_mb, s.std_peak_memory_mb, 2):>20}"
+                f"{_fmt_stat(s.avg_nodes_expanded, s.std_nodes_expanded, 1):>20}"
+                f"{_fmt_stat(s.avg_nodes_generated, s.std_nodes_generated, 1):>20}"
+                f"{gap_str:>9}"
                 f"{s.total_nodes_collapsed:>10}{s.total_nodes_spilled_to_disk:>9}{s.total_nodes_loaded_from_disk:>8}"
             )

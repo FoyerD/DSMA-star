@@ -18,41 +18,52 @@ class NamedInstance:
     difficulty: str = "default"
 
 
+def _combined_seed(seed: int, depth: int) -> int:
+    """Derive a per-(seed, depth) RNG seed so every depth gets its own independent
+    scramble stream even when the same seed value is reused across depths."""
+    return (seed * 1_000_003) ^ (depth * 97 + 1)
+
+
 def generate_puzzle_instances(
-    count: int,
+    seeds: Sequence[int],
     size: int,
     scramble_depths: Sequence[int],
-    seed: int,
 ) -> List[NamedInstance]:
-    """Generate solvable n-puzzle instances by random-walking away from the goal.
+    """Generate one solvable n-puzzle instance per (scramble_depth, seed) pair by
+    random-walking away from the goal.
+
+    Each (depth, seed) pair gets its own `random.Random` stream (see
+    `_combined_seed`), so passing the same list of `seeds` always reproduces the
+    exact same set of instances regardless of instance/algorithm ordering.
 
     NOTE: with `size=4` (the 15-puzzle, used by default) deeper scrambles are
     genuinely hard. A* is only expected to solve the easy/moderate depths
     (e.g. 10, 20) within typical benchmark limits -- see the README.
     """
-    rng = random.Random(seed)
-    instances: List[NamedInstance] = []
-
     depths = list(scramble_depths) if scramble_depths else [10]
+    seed_list = list(seeds) if seeds else [0]
     goal = goal_state(size)
-    for i in range(count):
-        depth = depths[i % len(depths)]
-        state = goal
-        last_state = None
-        for _ in range(depth):
-            moves = list(NPuzzleProblem(state, size=size).successors(state))
-            candidates = [m for m in moves if m[1] != last_state] or moves
-            _action, next_state, _cost = rng.choice(candidates)
-            last_state = state
-            state = next_state
-        problem = NPuzzleProblem(state, size=size)
-        instances.append(
-            NamedInstance(
-                instance_id=f"puzzle{size}x{size}_d{depth}_{i:03d}",
-                problem=problem,
-                difficulty=f"depth_{depth}",
+
+    instances: List[NamedInstance] = []
+    for depth in depths:
+        for seed in seed_list:
+            rng = random.Random(_combined_seed(seed, depth))
+            state = goal
+            last_state = None
+            for _ in range(depth):
+                moves = list(NPuzzleProblem(state, size=size).successors(state))
+                candidates = [m for m in moves if m[1] != last_state] or moves
+                _action, next_state, _cost = rng.choice(candidates)
+                last_state = state
+                state = next_state
+            problem = NPuzzleProblem(state, size=size)
+            instances.append(
+                NamedInstance(
+                    instance_id=f"puzzle{size}x{size}_d{depth}_seed{seed}",
+                    problem=problem,
+                    difficulty=f"depth_{depth}",
+                )
             )
-        )
 
     return instances
 

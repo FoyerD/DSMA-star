@@ -1,8 +1,10 @@
+import statistics
 from pathlib import Path
 
 from algorithms import AStar, DynamicSMACollapse, ILBFS, SMAStar, TwoLevelDynamicSMA, normalize_memory_limits
 from algorithms.base import SearchLimits
 from benchmark.instance_generators import generate_puzzle_instances, generate_sokoban_instances
+from benchmark.metrics import aggregate_by_domain_and_algorithm
 from benchmark.results import save_results_csv, save_results_json
 from benchmark.runner import run_benchmark
 from domains.n_puzzle import NPuzzleProblem, goal_state
@@ -58,7 +60,7 @@ def test_normalize_memory_limits_accepts_int_or_list():
 
 
 def test_multiple_sma_star_instances_run_independently_with_distinct_names():
-    instances = generate_puzzle_instances(count=1, size=3, scramble_depths=[10], seed=6)
+    instances = generate_puzzle_instances(seeds=[6], size=3, scramble_depths=[10])
     memory_limits = [500, 1_000, 2_000]
     algorithms = [SMAStar(memory_limit_nodes=m) for m in memory_limits]
     results = run_benchmark(instances, algorithms, LIMITS)
@@ -77,7 +79,7 @@ def test_ilbfs_solves_easy_puzzle():
 
 
 def test_dynamic_sma_collapse_runs_without_crashing():
-    instances = generate_puzzle_instances(count=2, size=3, scramble_depths=[10, 15], seed=3)
+    instances = generate_puzzle_instances(seeds=[3], size=3, scramble_depths=[10, 15])
     for instance in instances:
         result = DynamicSMACollapse().search(instance.problem, LIMITS)
         assert result.algorithm_name == "dynamic_sma_collapse"
@@ -86,7 +88,7 @@ def test_dynamic_sma_collapse_runs_without_crashing():
 
 
 def test_two_level_dynamic_sma_runs_and_cleans_up_sqlite(tmp_path: Path):
-    instance = generate_puzzle_instances(count=1, size=3, scramble_depths=[15], seed=4)[0]
+    instance = generate_puzzle_instances(seeds=[4], size=3, scramble_depths=[15])[0]
     disk_dir = tmp_path / "disk_cache"
     algorithm = TwoLevelDynamicSMA(keep_disk=False, disk_dir=disk_dir)
     result = algorithm.search(instance.problem, LIMITS)
@@ -98,7 +100,7 @@ def test_two_level_dynamic_sma_runs_and_cleans_up_sqlite(tmp_path: Path):
 
 
 def test_two_level_dynamic_sma_keeps_disk_file_when_requested(tmp_path: Path):
-    instance = generate_puzzle_instances(count=1, size=3, scramble_depths=[15], seed=5)[0]
+    instance = generate_puzzle_instances(seeds=[5], size=3, scramble_depths=[15])[0]
     disk_dir = tmp_path / "disk_cache_kept"
     algorithm = TwoLevelDynamicSMA(keep_disk=True, disk_dir=disk_dir)
     algorithm.search(instance.problem, LIMITS)
@@ -107,7 +109,7 @@ def test_two_level_dynamic_sma_keeps_disk_file_when_requested(tmp_path: Path):
 
 
 def test_benchmark_runner_produces_results_for_all_algorithms():
-    instances = generate_puzzle_instances(count=2, size=3, scramble_depths=[10], seed=1)
+    instances = generate_puzzle_instances(seeds=[1, 2], size=3, scramble_depths=[10])
     instances += generate_sokoban_instances(levels=["easy"])
     algorithms = [
         AStar(),
@@ -132,7 +134,7 @@ def test_benchmark_runner_produces_results_for_all_algorithms():
 
 
 def test_results_are_saved_as_csv_and_json(tmp_path: Path):
-    instances = generate_puzzle_instances(count=1, size=3, scramble_depths=[5], seed=2)
+    instances = generate_puzzle_instances(seeds=[2], size=3, scramble_depths=[5])
     results = run_benchmark(instances, [AStar()], LIMITS)
     csv_path = tmp_path / "out" / "benchmark_results.csv"
     json_path = tmp_path / "out" / "benchmark_results.json"
@@ -140,3 +142,48 @@ def test_results_are_saved_as_csv_and_json(tmp_path: Path):
     save_results_json(results, json_path)
     assert csv_path.exists() and csv_path.stat().st_size > 0
     assert json_path.exists() and json_path.stat().st_size > 0
+
+
+def test_generate_puzzle_instances_is_one_per_seed_per_depth():
+    instances = generate_puzzle_instances(seeds=[1, 2, 3], size=3, scramble_depths=[5, 10])
+    assert len(instances) == 6
+    assert {i.difficulty for i in instances} == {"depth_5", "depth_10"}
+    assert len({i.instance_id for i in instances}) == 6
+
+
+def test_generate_puzzle_instances_is_deterministic():
+    first = generate_puzzle_instances(seeds=[1, 2, 3], size=3, scramble_depths=[5, 10])
+    second = generate_puzzle_instances(seeds=[1, 2, 3], size=3, scramble_depths=[5, 10])
+    assert [i.problem.start for i in first] == [i.problem.start for i in second]
+
+
+def test_generate_puzzle_instances_depths_are_independent_for_same_seed():
+    # A seed reused across depths must not be a truncated/extended walk of one
+    # shared RNG stream -- each depth gets its own independent scramble.
+    instances = generate_puzzle_instances(seeds=[42], size=3, scramble_depths=[5, 6])
+    assert instances[0].problem.start != instances[1].problem.start
+
+
+def test_aggregate_by_domain_and_algorithm_reports_mean_and_sample_std():
+    instances = generate_puzzle_instances(seeds=[10, 11, 12, 13], size=3, scramble_depths=[8])
+    results = run_benchmark(instances, [AStar()], LIMITS)
+    summaries = aggregate_by_domain_and_algorithm(results)
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert summary.num_instances == 4
+
+    runtimes_solved = [r.runtime_seconds for r in results if r.success]
+    assert summary.avg_runtime_seconds_solved == statistics.fmean(runtimes_solved)
+    assert summary.std_runtime_seconds_solved == statistics.stdev(runtimes_solved)
+
+    nodes_expanded = [r.nodes_expanded for r in results]
+    assert summary.avg_nodes_expanded == statistics.fmean(nodes_expanded)
+    assert summary.std_nodes_expanded == statistics.stdev(nodes_expanded)
+
+
+def test_aggregate_std_is_zero_with_a_single_seed():
+    instances = generate_puzzle_instances(seeds=[7], size=3, scramble_depths=[5])
+    results = run_benchmark(instances, [AStar()], LIMITS)
+    summary = aggregate_by_domain_and_algorithm(results)[0]
+    assert summary.std_nodes_expanded == 0.0
+    assert summary.std_peak_memory_mb == 0.0

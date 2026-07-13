@@ -1,7 +1,7 @@
 """CLI entry point: run the heuristic-search benchmark suite.
 
 Usage:
-    python main.py --domain all --instances 5 --seed 0
+    python main.py --domain all --seeds 0 1 2 3 4
 
 There is no wall-clock timeout: a shared stopwatch structurally favors A*
 (it has no memory-management overhead per node), which defeats the point of
@@ -23,7 +23,13 @@ from algorithms.base import SearchAlgorithm, SearchLimits
 from benchmark.analyze import analyze_results
 from benchmark.instance_generators import NamedInstance, generate_puzzle_instances, generate_sokoban_instances
 from benchmark.metrics import aggregate_by_domain_and_algorithm
-from benchmark.results import print_summary_tables, save_results_csv, save_results_json
+from benchmark.results import (
+    print_summary_tables,
+    save_results_csv,
+    save_results_json,
+    save_summary_csv,
+    save_summary_json,
+)
 from benchmark.runner import run_benchmark
 
 
@@ -33,9 +39,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--domain", choices=["puzzle", "sokoban", "all"], default="all")
     parser.add_argument(
-        "--instances", type=int, default=10, help="Number of puzzle instances (Sokoban always uses its 3 handcrafted levels)."
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=[0],
+        help=(
+            "RNG seeds for reproducible instance generation. One puzzle instance is generated "
+            "per (scramble depth, seed) pair, so results are aggregated as mean/std across seeds "
+            "for each (algorithm, scramble depth) combination."
+        ),
     )
-    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output-dir", type=str, default="results")
     parser.add_argument("--puzzle-size", type=int, default=4, help="N-puzzle board size (4 = 15-puzzle).")
     parser.add_argument("--scramble-depths", type=int, nargs="+", default=[10, 20, 30, 40, 50])
@@ -96,10 +109,9 @@ def build_instances(args: argparse.Namespace) -> List[NamedInstance]:
     if args.domain in ("puzzle", "all"):
         instances.extend(
             generate_puzzle_instances(
-                count=args.instances,
+                seeds=args.seeds,
                 size=args.puzzle_size,
                 scramble_depths=args.scramble_depths,
-                seed=args.seed,
             )
         )
 
@@ -162,6 +174,9 @@ def main() -> None:
 
     summaries = aggregate_by_domain_and_algorithm(results)
     print_summary_tables(summaries)
+    save_summary_csv(summaries, output_dir / "benchmark_summary.csv")
+    save_summary_json(summaries, output_dir / "benchmark_summary.json")
+    print(f"Saved mean/std summary to {output_dir / 'benchmark_summary.csv'} and {output_dir / 'benchmark_summary.json'}")
 
     analyze_results(output_dir / "benchmark_results.csv", output_dir / "analysis")
     print(f"\nWrote analysis to {output_dir / 'analysis'}")
