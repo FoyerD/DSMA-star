@@ -26,7 +26,7 @@ def _deep_tuple(obj: Any) -> Any:
     return obj
 
 
-@dataclass
+@dataclass(slots=True)
 class DiskNodeRecord:
     node_id: int
     parent_id: Optional[int]

@@ -60,7 +60,7 @@ def normalize_memory_limits(value: Union[int, Iterable[int], MemoryLimit, Iterab
     return result
 
 
-@dataclass
+@dataclass(slots=True)
 class _Node:
     key: Any
     state: Any

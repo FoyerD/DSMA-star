@@ -69,7 +69,7 @@ from .base import SearchAlgorithm, SearchLimits, SearchResult
 _INF = float("inf")
 
 
-@dataclass
+@dataclass(slots=True)
 class _RamNode:
     node_id: int
     state: Any

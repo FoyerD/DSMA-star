@@ -58,7 +58,7 @@ from .base import SearchAlgorithm, SearchLimits, SearchResult
 _INF = float("inf")
 
 
-@dataclass
+@dataclass(slots=True)
 class _Node:
     key: Any
     state: Any
