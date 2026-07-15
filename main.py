@@ -103,7 +103,7 @@ def parse_args() -> argparse.Namespace:
         "--sma-memory",
         type=MemoryLimit.parse,
         nargs="+",
-        default=[MemoryLimit(50_000)],
+        default=[MemoryLimit.parse('20%')],
         help=(
             "Memory limit(s) for SMA*. Accepts flat node counts (e.g. 10000) "
             "or percentages of the instance's total_nodes (e.g. 10%%). Provide "
@@ -114,19 +114,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dynamic-initial-ram",
         type=MemoryLimit.parse,
-        default=MemoryLimit(5_000),
+        default=MemoryLimit.parse('5%'),
         help="Dynamic SMA*-Collapse initial RAM node budget (int or percentage, e.g. 10%%).",
     )
     parser.add_argument(
         "--dynamic-min-ram",
         type=MemoryLimit.parse,
-        default=MemoryLimit(500),
+        default=MemoryLimit.parse('2%'),
         help="Dynamic SMA*-Collapse minimum RAM node budget (int or percentage).",
     )
     parser.add_argument(
         "--dynamic-max-ram",
         type=MemoryLimit.parse,
-        default=MemoryLimit(20_000),
+        default=MemoryLimit.parse('20%'),
         help="Dynamic SMA*-Collapse maximum RAM node budget (int or percentage).",
     )
     parser.add_argument("--two-level-initial-ram", type=int, default=2_000)
