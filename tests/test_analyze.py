@@ -4,6 +4,7 @@ from pathlib import Path
 from benchmark.analyze import (
     _is_sma_star_variant,
     _sma_star_variant_names,
+    add_known_optimal_gaps,
     add_optimality_gaps,
     analyze_results,
     compute_astar_reference,
@@ -425,3 +426,151 @@ def test_analyze_results_end_to_end_produces_all_files(tmp_path: Path):
     markdown = (out_dir / "human_readable_summary.md").read_text(encoding="utf-8")
     assert "# Benchmark Results Summary" in markdown
     assert "Conclusion" in markdown
+
+
+# --------------------------------------------------------------------------
+# nodes_restored: old CSVs (written before this field existed) must not crash
+# and must default the missing column to 0; new CSVs must aggregate it correctly.
+# --------------------------------------------------------------------------
+
+
+def test_load_results_missing_nodes_restored_defaults_to_zero(tmp_path: Path):
+    # _HEADER (above) intentionally has no "nodes_restored" column, simulating
+    # a benchmark_results.csv written before this field was added.
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_fake_csv(csv_path)
+    results = load_results(csv_path)
+    assert results  # sanity: old-format file still loads rows
+    for row in results:
+        assert row["nodes_restored"] == 0
+        assert isinstance(row["nodes_restored"], int)
+
+
+def test_algorithm_summary_has_total_nodes_restored_column_even_for_old_csv(tmp_path: Path):
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_fake_csv(csv_path)
+    results = load_results(csv_path)
+    add_optimality_gaps(results)
+    add_known_optimal_gaps(results)
+    rows = write_algorithm_summary(results, tmp_path / "analysis")
+    for row in rows:
+        assert row["total_nodes_restored"] == 0
+
+
+def test_domain_algorithm_summary_has_total_nodes_restored_column(tmp_path: Path):
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_fake_csv(csv_path)
+    results = load_results(csv_path)
+    add_optimality_gaps(results)
+    add_known_optimal_gaps(results)
+    rows = write_domain_algorithm_summary(results, tmp_path / "analysis")
+    for row in rows:
+        assert row["total_nodes_restored"] == 0
+
+
+def test_proposed_vs_baselines_has_proposed_total_restored_column(tmp_path: Path):
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_fake_csv(csv_path)
+    results = load_results(csv_path)
+    add_optimality_gaps(results)
+    add_known_optimal_gaps(results)
+    rows = write_proposed_vs_baselines(results, tmp_path / "analysis")
+    for row in rows:
+        assert row["proposed_total_restored"] == 0
+
+
+_NEW_HEADER = _HEADER + ["instance_source", "known_optimal_depth", "nodes_restored"]
+
+
+def _write_csv_with_restores(path: Path) -> None:
+    rows = [
+        _row(
+            algorithm_name="dynamic_sma_collapse", domain_name="n_puzzle", instance_id="korf1_d52",
+            instance_difficulty="korf_depth_52", success="True", solution_cost="52", solution_depth="52",
+            runtime_seconds="1.0", peak_memory_mb="10.0", nodes_expanded="500", nodes_generated="900",
+            nodes_collapsed="300", instance_source="korf100", known_optimal_depth="52", nodes_restored="3",
+        ),
+        _row(
+            algorithm_name="dynamic_sma_collapse", domain_name="n_puzzle", instance_id="korf2_d55",
+            instance_difficulty="korf_depth_55", success="True", solution_cost="55", solution_depth="55",
+            runtime_seconds="2.0", peak_memory_mb="12.0", nodes_expanded="700", nodes_generated="1300",
+            nodes_collapsed="400", instance_source="korf100", known_optimal_depth="55", nodes_restored="7",
+        ),
+        _row(
+            algorithm_name="astar", domain_name="n_puzzle", instance_id="korf1_d52",
+            instance_difficulty="korf_depth_52", success="True", solution_cost="52", solution_depth="52",
+            runtime_seconds="0.5", peak_memory_mb="8.0", nodes_expanded="400", nodes_generated="600",
+            instance_source="korf100", known_optimal_depth="52",
+        ),
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=_NEW_HEADER)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def test_nodes_restored_aggregated_correctly_from_new_format_csv(tmp_path: Path):
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_csv_with_restores(csv_path)
+    results = load_results(csv_path)
+    add_optimality_gaps(results)
+    add_known_optimal_gaps(results)
+
+    rows = write_algorithm_summary(results, tmp_path / "analysis")
+    dyn_row = next(r for r in rows if r["algorithm_name"] == "dynamic_sma_collapse")
+    assert dyn_row["total_nodes_collapsed"] == 700
+    assert dyn_row["total_nodes_restored"] == 10
+
+    astar_row = next(r for r in rows if r["algorithm_name"] == "astar")
+    assert astar_row["total_nodes_restored"] == 0
+
+
+def test_instance_comparison_includes_known_optimal_depth_and_gap(tmp_path: Path):
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_csv_with_restores(csv_path)
+    results = load_results(csv_path)
+    add_optimality_gaps(results)
+    add_known_optimal_gaps(results)
+    rows = write_instance_comparison(results, tmp_path / "analysis")
+    dyn_row = next(r for r in rows if r["algorithm_name"] == "dynamic_sma_collapse" and r["instance_id"] == "korf1_d52")
+    assert dyn_row["known_optimal_depth"] == 52.0
+    assert dyn_row["optimality_gap_vs_known_optimal"] == 0.0  # solved exactly at the true optimal depth
+    assert dyn_row["nodes_restored"] == 3
+    assert dyn_row["instance_source"] == "korf100"
+
+
+def test_proposed_vs_baselines_reports_total_restored_from_new_format_csv(tmp_path: Path):
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_csv_with_restores(csv_path)
+    results = load_results(csv_path)
+    add_optimality_gaps(results)
+    add_known_optimal_gaps(results)
+    rows = write_proposed_vs_baselines(results, tmp_path / "analysis")
+    comparison = next(
+        r for r in rows if r["group_name"] == "all_domains"
+        and r["proposed_algorithm"] == "dynamic_sma_collapse" and r["baseline_algorithm"] == "astar"
+    )
+    assert comparison["proposed_total_restored"] == 10
+
+
+def test_analyze_results_end_to_end_still_works_with_new_format_csv(tmp_path: Path):
+    csv_path = tmp_path / "benchmark_results.csv"
+    _write_csv_with_restores(csv_path)
+    out_dir = tmp_path / "analysis"
+    analyze_results(csv_path, out_dir)
+    for filename in [
+        "algorithm_summary.csv",
+        "domain_algorithm_summary.csv",
+        "instance_comparison.csv",
+        "winners_by_instance.csv",
+        "proposed_algorithms_vs_baselines.csv",
+        "human_readable_summary.md",
+    ]:
+        path = out_dir / filename
+        assert path.exists() and path.stat().st_size > 0
+
+    markdown = (out_dir / "human_readable_summary.md").read_text(encoding="utf-8")
+    assert "Collapse and restore behavior" in markdown
+    assert "restored" in markdown

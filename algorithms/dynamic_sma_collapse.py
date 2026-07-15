@@ -20,6 +20,29 @@ algorithm has had to collapse nodes to stay within budget:
 resident in memory (`nodes` below), not just leaves -- ancestors of a
 resident leaf must stay resident too so f-values can be backed up and the
 solution path can be reconstructed, exactly as in our `SMAStar`.
+
+### What counts as "restored" (`SearchResult.nodes_restored`)
+
+Collapse (`_prune_worst_leaf`) deletes a node's `_Node` record outright and
+backs up only a scalar `forgotten_f` bound onto its parent -- the pruned
+node's state/children are not retained anywhere (see the module docstring
+of `sma_star.py` for why this scalar-backup simplification is safe here:
+both domains are deterministic, so successors regenerate identically).
+
+A node's *entire* subtree is collapsed away exactly when every one of its
+children has been pruned, which makes the node a leaf again -- distinguishable
+from a node that was never expanded by `forgotten_f != inf`. If that node is
+later reselected as the best leaf and expanded again (`_expand`), this is a
+restore: the search is regenerating a subtree it had previously forgotten,
+because the backed-up bound made it look competitive again. `nodes_restored`
+counts the freshly generated children produced during such a restore-expand
+(0 for an ordinary first-time expansion, where `forgotten_f` is still `inf`).
+
+This is not a perfect restore: the regenerated children are brand-new `_Node`
+objects (new `order`, no memory of the exact set of grandchildren the
+original subtree had before it was collapsed) -- only the scalar f-value
+bound is reused for selection. It is, however, the only "does a previously
+collapsed part of the tree come back?" event this simplified SMA* has.
 """
 from __future__ import annotations
 
@@ -109,6 +132,7 @@ class DynamicSMACollapse(SearchAlgorithm):
 
         nodes_expanded = 0
         nodes_collapsed = 0
+        nodes_restored = 0
         max_frontier_size = 1
         ram_capacity_peak = b_ram
         ram_capacity_min = b_ram
@@ -131,7 +155,7 @@ class DynamicSMACollapse(SearchAlgorithm):
                     break
 
                 generated_before = tracker.nodes_generated
-                self._expand(problem, nodes, leaf, tracker, counter)
+                nodes_restored += self._expand(problem, nodes, leaf, tracker, counter)
                 nodes_expanded += 1
                 generated_count_epoch += tracker.nodes_generated - generated_before
 
@@ -189,6 +213,7 @@ class DynamicSMACollapse(SearchAlgorithm):
         )
         result.reexpansions = 0
         result.nodes_collapsed = nodes_collapsed
+        result.nodes_restored = nodes_restored
         result.ram_capacity_initial = min(max(limits.dynamic_initial_ram_nodes, b_ram_min), b_ram_max)
         result.ram_capacity_final = b_ram
         result.ram_capacity_peak = ram_capacity_peak
@@ -211,8 +236,15 @@ class DynamicSMACollapse(SearchAlgorithm):
         leaf: _Node,
         tracker: RunTracker,
         counter: "itertools.count",
-    ) -> None:
+    ) -> int:
+        """Expand `leaf`, returning how many of its new children count as
+        "restored" (see module docstring): nonzero only when `leaf` was
+        previously expanded and its entire subtree was since collapsed away
+        (`leaf.forgotten_f != inf`), i.e. this expansion is regenerating a
+        subtree the search had forgotten."""
+        is_restore = leaf.forgotten_f != _INF
         new_child_added = False
+        restored = 0
         for action, next_state, cost in problem.successors(leaf.state):
             next_key = problem.state_key(next_state)
             if next_key == leaf.parent_key:
@@ -235,8 +267,11 @@ class DynamicSMACollapse(SearchAlgorithm):
             leaf.children.add(next_key)
             tracker.nodes_generated += 1
             new_child_added = True
+            if is_restore:
+                restored += 1
         if not new_child_added:
             leaf.dead_end = True
+        return restored
 
     @staticmethod
     def _prune_worst_leaf(nodes: Dict[Any, _Node], root_key: Any) -> bool:

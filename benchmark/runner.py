@@ -35,6 +35,8 @@ def run_benchmark(
             print(f"       → {status} ({result.runtime_seconds:.1f}s, {result.peak_memory_mb:.0f} MB)")
             result.instance_id = instance.instance_id
             result.instance_difficulty = instance.difficulty
+            result.instance_source = instance.source
+            result.known_optimal_depth = instance.optimal_depth
             result.domain_name = getattr(problem, "name", result.domain_name)
             results.append(result)
     return results

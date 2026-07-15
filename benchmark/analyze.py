@@ -28,6 +28,7 @@ _COUNT_FIELDS = (
     "nodes_expanded",
     "nodes_generated",
     "nodes_collapsed",
+    "nodes_restored",
     "nodes_spilled_to_disk",
     "nodes_loaded_from_disk",
     "disk_batches_loaded",
@@ -56,6 +57,7 @@ _OPTIONAL_FLOAT_FIELDS = (
     "ram_capacity_final",
     "ram_capacity_peak",
     "ram_capacity_min",
+    "known_optimal_depth",
 )
 
 _BOOL_FIELDS = ("success", "node_limit_reached", "memory_limit_reached", "stack_exhausted")
@@ -136,6 +138,7 @@ def load_results(path: Path) -> List[Row]:
                 "domain_name": (raw.get("domain_name") or "").strip(),
                 "instance_id": (raw.get("instance_id") or "").strip(),
                 "instance_difficulty": (raw.get("instance_difficulty") or "default").strip(),
+                "instance_source": (raw.get("instance_source") or "unknown").strip(),
                 "error_message": (raw.get("error_message") or "") or None,
             }
             for field_name in _BOOL_FIELDS:
@@ -145,6 +148,7 @@ def load_results(path: Path) -> List[Row]:
             for field_name in _COUNT_FIELDS:
                 row[field_name] = _to_count(raw.get(field_name))
             row["optimality_gap_vs_astar"] = None
+            row["optimality_gap_vs_known_optimal"] = None
             rows.append(row)
     return rows
 
@@ -174,6 +178,20 @@ def add_optimality_gaps(results: List[Row], astar_reference: Optional[Dict[Tuple
             if astar_cost is not None:
                 gap = row["solution_cost"] - astar_cost
         row["optimality_gap_vs_astar"] = gap
+    return results
+
+
+def add_known_optimal_gaps(results: List[Row]) -> List[Row]:
+    """Annotate each row with `optimality_gap_vs_known_optimal` (solution_cost
+    - known_optimal_depth). Unlike `optimality_gap_vs_astar`, this doesn't
+    require A* to have solved the same instance -- it only needs the true
+    optimal depth to be known in advance, which is the case for Korf
+    instances (`known_optimal_depth`, set from korfs100.csv)."""
+    for row in results:
+        gap = None
+        if row["success"] and row["solution_cost"] is not None and row["known_optimal_depth"] is not None:
+            gap = row["solution_cost"] - row["known_optimal_depth"]
+        row["optimality_gap_vs_known_optimal"] = gap
     return results
 
 
@@ -213,6 +231,7 @@ def _aggregate(rows: List[Row]) -> Dict[str, Any]:
     costs_solved = [r["solution_cost"] for r in solved if r["solution_cost"] is not None]
     depths_solved = [r["solution_depth"] for r in solved if r["solution_depth"] is not None]
     gaps = [r["optimality_gap_vs_astar"] for r in rows if r["optimality_gap_vs_astar"] is not None]
+    known_gaps = [r["optimality_gap_vs_known_optimal"] for r in rows if r["optimality_gap_vs_known_optimal"] is not None]
     peak_mem = [r["peak_memory_mb"] for r in rows if r["peak_memory_mb"] is not None]
     ram_final = [r["ram_capacity_final"] for r in rows if r["ram_capacity_final"] is not None]
     disk_io = [r["disk_io_time_seconds"] for r in rows if r["disk_io_time_seconds"] is not None]
@@ -234,7 +253,9 @@ def _aggregate(rows: List[Row]) -> Dict[str, Any]:
         "avg_solution_cost_solved": _mean(costs_solved),
         "avg_solution_depth_solved": _mean(depths_solved),
         "avg_optimality_gap_vs_astar": _mean(gaps),
+        "avg_optimality_gap_vs_known_optimal": _mean(known_gaps),
         "total_nodes_collapsed": sum(r["nodes_collapsed"] for r in rows),
+        "total_nodes_restored": sum(r["nodes_restored"] for r in rows),
         "total_nodes_spilled_to_disk": sum(r["nodes_spilled_to_disk"] for r in rows),
         "total_nodes_loaded_from_disk": sum(r["nodes_loaded_from_disk"] for r in rows),
         "total_disk_batches_loaded": sum(r["disk_batches_loaded"] for r in rows),
@@ -276,7 +297,9 @@ _ALGORITHM_SUMMARY_FIELDS = [
     "avg_solution_cost_solved",
     "avg_solution_depth_solved",
     "avg_optimality_gap_vs_astar",
+    "avg_optimality_gap_vs_known_optimal",
     "total_nodes_collapsed",
+    "total_nodes_restored",
     "total_nodes_spilled_to_disk",
     "total_nodes_loaded_from_disk",
     "total_disk_batches_loaded",
@@ -323,7 +346,9 @@ _DOMAIN_ALGORITHM_SUMMARY_FIELDS = [
     "avg_solution_cost_solved",
     "avg_solution_depth_solved",
     "avg_optimality_gap_vs_astar",
+    "avg_optimality_gap_vs_known_optimal",
     "total_nodes_collapsed",
+    "total_nodes_restored",
     "total_nodes_spilled_to_disk",
     "total_nodes_loaded_from_disk",
     "avg_disk_io_time_seconds",
@@ -353,6 +378,7 @@ _INSTANCE_COMPARISON_FIELDS = [
     "domain_name",
     "instance_id",
     "difficulty_label",
+    "instance_source",
     "algorithm_name",
     "success",
     "memory_limit_reached",
@@ -364,8 +390,11 @@ _INSTANCE_COMPARISON_FIELDS = [
     "nodes_generated",
     "solution_cost",
     "solution_depth",
+    "known_optimal_depth",
     "optimality_gap_vs_astar",
+    "optimality_gap_vs_known_optimal",
     "nodes_collapsed",
+    "nodes_restored",
     "nodes_spilled_to_disk",
     "nodes_loaded_from_disk",
     "disk_io_time_seconds",
@@ -385,6 +414,7 @@ def write_instance_comparison(results: List[Row], out_dir: Path) -> List[Dict[st
                 "domain_name": row["domain_name"],
                 "instance_id": row["instance_id"],
                 "difficulty_label": row["instance_difficulty"],
+                "instance_source": row["instance_source"],
                 "algorithm_name": row["algorithm_name"],
                 "success": row["success"],
                 "memory_limit_reached": row["memory_limit_reached"],
@@ -396,8 +426,11 @@ def write_instance_comparison(results: List[Row], out_dir: Path) -> List[Dict[st
                 "nodes_generated": row["nodes_generated"],
                 "solution_cost": row["solution_cost"],
                 "solution_depth": row["solution_depth"],
+                "known_optimal_depth": row["known_optimal_depth"],
                 "optimality_gap_vs_astar": row["optimality_gap_vs_astar"],
+                "optimality_gap_vs_known_optimal": row["optimality_gap_vs_known_optimal"],
                 "nodes_collapsed": row["nodes_collapsed"],
+                "nodes_restored": row["nodes_restored"],
                 "nodes_spilled_to_disk": row["nodes_spilled_to_disk"],
                 "nodes_loaded_from_disk": row["nodes_loaded_from_disk"],
                 "disk_io_time_seconds": row["disk_io_time_seconds"],
@@ -529,6 +562,7 @@ _PROPOSED_VS_BASELINES_FIELDS = [
     "baseline_avg_solution_cost",
     "solution_cost_delta",
     "proposed_total_collapsed",
+    "proposed_total_restored",
     "proposed_total_spilled_to_disk",
     "proposed_total_loaded_from_disk",
     "interpretation",
@@ -642,6 +676,7 @@ def write_proposed_vs_baselines(results: List[Row], out_dir: Path) -> List[Dict[
                         stats_p["avg_solution_cost_solved"], stats_b["avg_solution_cost_solved"]
                     ),
                     "proposed_total_collapsed": stats_p["total_nodes_collapsed"],
+                    "proposed_total_restored": stats_p["total_nodes_restored"],
                     "proposed_total_spilled_to_disk": stats_p["total_nodes_spilled_to_disk"],
                     "proposed_total_loaded_from_disk": stats_p["total_nodes_loaded_from_disk"],
                     "interpretation": _interpret(proposed, stats_p, stats_b),
@@ -758,6 +793,58 @@ def write_markdown_summary(
             )
     lines.append("")
 
+    lines.append("## Collapse and restore behavior")
+    lines.append("")
+    collapsing_algos = sorted(
+        (r for r in algorithm_summary if r.get("total_nodes_collapsed", 0) > 0),
+        key=lambda r: -r["total_nodes_collapsed"],
+    )
+    if collapsing_algos:
+        lines.append("Algorithms that collapsed nodes (most to least):")
+        for r in collapsing_algos:
+            lines.append(
+                f"- **{_display(r['algorithm_name'])}**: {r['total_nodes_collapsed']} collapsed, "
+                f"{r.get('total_nodes_restored', 0)} restored."
+            )
+    else:
+        lines.append("_No algorithm collapsed any nodes in this dataset._")
+    lines.append("")
+
+    dyn_collapsed = dyn_stats.get("total_nodes_collapsed", 0)
+    dyn_restored = dyn_stats.get("total_nodes_restored", 0)
+    if dyn_collapsed > 0:
+        lines.append(
+            f"Dynamic SMA*-Collapse restored {dyn_restored} node(s) out of {dyn_collapsed} collapsed "
+            f"({dyn_restored / dyn_collapsed:.1%} restore/collapse ratio). \"Restored\" means a node whose "
+            f"entire subtree had been collapsed away was re-expanded because it became the best leaf again "
+            f"-- see the `nodes_restored` docs in `algorithms/dynamic_sma_collapse.py` for exactly what this "
+            f"simplified SMA* counts as a restore."
+        )
+    else:
+        lines.append("Dynamic SMA*-Collapse did not collapse any nodes in this dataset, so nothing could be restored.")
+    lines.append("")
+
+    dyn_rows = [r for r in results if r["algorithm_name"] == "dynamic_sma_collapse"]
+    restored_runtimes = [r["runtime_seconds"] for r in dyn_rows if r["nodes_restored"] > 0 and r["runtime_seconds"] is not None]
+    unrestored_runtimes = [r["runtime_seconds"] for r in dyn_rows if r["nodes_restored"] == 0 and r["runtime_seconds"] is not None]
+    if restored_runtimes and unrestored_runtimes:
+        lines.append(
+            f"Runs with at least one restore: avg runtime {_fmt(_mean(restored_runtimes))}s "
+            f"(n={len(restored_runtimes)}); runs with no restores: avg runtime "
+            f"{_fmt(_mean(unrestored_runtimes))}s (n={len(unrestored_runtimes)})."
+        )
+    else:
+        lines.append("_Not enough runs both with and without restores in this dataset to compare runtime._")
+    lines.append("")
+
+    lines.append(
+        "- **Memory vs. collapse/restore tradeoff**: a smaller RAM bound forces more collapsing (and, later, "
+        "potentially more restoring) as previously-forgotten subtrees become competitive again and must be "
+        "regenerated from scratch -- trading peak memory for extra re-expansion work. Compare the peak-memory "
+        "ranking above against the collapse/restore counts here."
+    )
+    lines.append("")
+
     two_level_stats = _stats_for("two_level_dynamic_sma", results)
     lines.append("## Did Two-Level Dynamic SMA* improve over Dynamic SMA*-Collapse?")
     lines.append("")
@@ -782,7 +869,8 @@ def write_markdown_summary(
     lines.append(f"- **Disk usage**: total nodes spilled to disk across all runs: "
                  f"{sum(r['nodes_spilled_to_disk'] for r in results)}; "
                  f"total nodes loaded back: {sum(r['nodes_loaded_from_disk'] for r in results)}.")
-    lines.append(f"- **Collapses**: total nodes collapsed across all runs: {sum(r['nodes_collapsed'] for r in results)}.")
+    lines.append(f"- **Collapses**: total nodes collapsed across all runs: {sum(r['nodes_collapsed'] for r in results)}; "
+                 f"total nodes restored: {sum(r['nodes_restored'] for r in results)}.")
     lines.append(f"- **Solution quality**: average optimality gap vs. A* (where A* solved the same instance): "
                  f"{_fmt(_mean([r['optimality_gap_vs_astar'] for r in results if r['optimality_gap_vs_astar'] is not None]))}.")
     lines.append("")
@@ -823,6 +911,7 @@ def write_markdown_summary(
 def analyze_results(input_csv: Path, output_dir: Path) -> None:
     results = load_results(Path(input_csv))
     add_optimality_gaps(results)
+    add_known_optimal_gaps(results)
 
     output_dir = Path(output_dir)
     algorithm_summary = write_algorithm_summary(results, output_dir)

@@ -55,6 +55,11 @@ class SearchResult:
     # Not in the original spec's field list, but needed to group summaries by
     # difficulty (e.g. puzzle scramble depth, Sokoban easy/medium/hard).
     instance_difficulty: str = "default"
+    # Where the instance came from ("scramble", "korf100", "sokoban_handcrafted",
+    # ...) and its true optimal solution depth when known in advance (e.g. from
+    # korfs100.csv); both are copied from NamedInstance by benchmark/runner.py.
+    instance_source: str = "unknown"
+    known_optimal_depth: Optional[int] = None
     success: bool = False
     solution_actions: List[Any] = field(default_factory=list)
     solution_cost: Optional[float] = None
@@ -74,6 +79,9 @@ class SearchResult:
 
     # --- Extra metrics for memory-bounded / two-level algorithms ---
     nodes_collapsed: int = 0
+    # See dynamic_sma_collapse.py module docstring for exactly what counts as
+    # "restored" -- 0 for every algorithm except Dynamic SMA*-Collapse.
+    nodes_restored: int = 0
     nodes_spilled_to_disk: int = 0
     nodes_loaded_from_disk: int = 0
     disk_batches_loaded: int = 0

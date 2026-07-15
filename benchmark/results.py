@@ -79,7 +79,7 @@ def print_summary_tables(summaries: List[AggregateMetrics]) -> None:
         header = (
             f"{'algorithm':<22}{'n':>4}{'success%':>10}{'node-lim%':>10}{'mem-lim%':>10}{'stack-ex%':>10}"
             f"{'time(s) solved':>20}{'peak mem(MB)':>20}{'nodes expanded':>20}{'nodes generated':>20}"
-            f"{'avg_gap':>9}{'collapsed':>10}{'spilled':>9}{'loaded':>8}"
+            f"{'avg_gap':>9}{'collapsed':>10}{'restored':>9}{'spilled':>9}{'loaded':>8}"
         )
         print(header)
         print("-" * len(header))
@@ -96,5 +96,6 @@ def print_summary_tables(summaries: List[AggregateMetrics]) -> None:
                 f"{_fmt_stat(s.avg_nodes_expanded, s.std_nodes_expanded, 1):>20}"
                 f"{_fmt_stat(s.avg_nodes_generated, s.std_nodes_generated, 1):>20}"
                 f"{gap_str:>9}"
-                f"{s.total_nodes_collapsed:>10}{s.total_nodes_spilled_to_disk:>9}{s.total_nodes_loaded_from_disk:>8}"
+                f"{s.total_nodes_collapsed:>10}{s.total_nodes_restored:>9}"
+                f"{s.total_nodes_spilled_to_disk:>9}{s.total_nodes_loaded_from_disk:>8}"
             )

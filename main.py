@@ -21,7 +21,12 @@ import psutil
 from algorithms import AStar, DynamicSMACollapse, ILBFS, SMAStar, TwoLevelDynamicSMA, normalize_memory_limits
 from algorithms.base import SearchAlgorithm, SearchLimits
 from benchmark.analyze import analyze_results
-from benchmark.instance_generators import NamedInstance, generate_puzzle_instances, generate_sokoban_instances
+from benchmark.instance_generators import (
+    DEFAULT_KORF_CSV,
+    NamedInstance,
+    generate_npuzzle_instances,
+    generate_sokoban_instances,
+)
 from benchmark.metrics import aggregate_by_domain_and_algorithm
 from benchmark.results import (
     print_summary_tables,
@@ -51,6 +56,30 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", type=str, default="results")
     parser.add_argument("--puzzle-size", type=int, default=4, help="N-puzzle board size (4 = 15-puzzle).")
+    parser.add_argument(
+        "--puzzle-instance-source",
+        choices=["korf", "scramble"],
+        default="korf" if DEFAULT_KORF_CSV.exists() else "scramble",
+        help=(
+            "How to generate 15-puzzle instances: 'korf' selects Korf's 100 fixed historical "
+            "instances by true optimal solution depth (--optimal-depths, --korf-csv); "
+            "'scramble' generates instances by random-walking from the goal (--scramble-depths). "
+            "Defaults to 'korf' when korfs100.csv exists in the working directory, else 'scramble'."
+        ),
+    )
+    parser.add_argument(
+        "--korf-csv",
+        type=str,
+        default=str(DEFAULT_KORF_CSV),
+        help="Path to the Korf 100 instances CSV, used when --puzzle-instance-source=korf.",
+    )
+    parser.add_argument(
+        "--optimal-depths",
+        type=int,
+        nargs="+",
+        default=[40, 45, 50, 55, 60],
+        help="True optimal solution depths to select via Korf instances, used when --puzzle-instance-source=korf.",
+    )
     parser.add_argument("--scramble-depths", type=int, nargs="+", default=[10, 20, 30, 40, 50])
     parser.add_argument(
         "--max-nodes",
@@ -108,10 +137,13 @@ def build_instances(args: argparse.Namespace) -> List[NamedInstance]:
 
     if args.domain in ("puzzle", "all"):
         instances.extend(
-            generate_puzzle_instances(
+            generate_npuzzle_instances(
+                source=args.puzzle_instance_source,
                 seeds=args.seeds,
                 size=args.puzzle_size,
                 scramble_depths=args.scramble_depths,
+                optimal_depths=args.optimal_depths,
+                korf_csv=Path(args.korf_csv),
             )
         )
 

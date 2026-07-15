@@ -44,6 +44,7 @@ class AggregateMetrics:
     avg_optimality_gap: Optional[float] = None
     std_optimality_gap: Optional[float] = None
     total_nodes_collapsed: int = 0
+    total_nodes_restored: int = 0
     total_nodes_spilled_to_disk: int = 0
     total_nodes_loaded_from_disk: int = 0
     avg_disk_io_time_seconds: float = 0.0
@@ -134,6 +135,7 @@ def aggregate_by_domain_and_algorithm(
                 avg_optimality_gap=_mean(gaps) if gaps else None,
                 std_optimality_gap=_std_opt(gaps),
                 total_nodes_collapsed=sum(r.nodes_collapsed for r in group),
+                total_nodes_restored=sum(r.nodes_restored for r in group),
                 total_nodes_spilled_to_disk=sum(r.nodes_spilled_to_disk for r in group),
                 total_nodes_loaded_from_disk=sum(r.nodes_loaded_from_disk for r in group),
                 avg_disk_io_time_seconds=_mean(disk_io),

@@ -87,6 +87,69 @@ def test_dynamic_sma_collapse_runs_without_crashing():
         assert result.success or result.memory_limit_reached or result.node_limit_reached
 
 
+def test_dynamic_sma_collapse_nodes_restored_defaults_to_zero_without_pressure():
+    # Plenty of RAM relative to the search space -> nothing should ever need
+    # collapsing, so nothing can be restored either.
+    result = DynamicSMACollapse().search(_easy_puzzle(), LIMITS)
+    assert result.nodes_collapsed == 0
+    assert result.nodes_restored == 0
+
+
+def test_dynamic_sma_collapse_expand_counts_restored_only_on_reexpansion():
+    # Unit-level check of the exact "restore" counting rule documented in
+    # dynamic_sma_collapse.py: a leaf's re-expansion only counts as a restore
+    # once its entire subtree has been collapsed away (forgotten_f != inf).
+    import itertools
+
+    from algorithms._run_utils import RunTracker
+    from algorithms.dynamic_sma_collapse import DynamicSMACollapse, _Node
+    from domains.n_puzzle import NPuzzleProblem, goal_state
+
+    goal = goal_state(3)
+    problem = NPuzzleProblem(goal, size=3)  # blank at index 0 -> 2 successors: "down", "right"
+    algo = DynamicSMACollapse()
+    tracker = RunTracker.start(max_nodes=1_000, max_memory_mb=4_096.0)
+    counter = itertools.count()
+
+    root = _Node(key=goal, state=goal, g=0.0, base_f=0.0, parent_key=None, action=None, depth=0, order=next(counter))
+    nodes = {goal: root}
+
+    # First expansion: forgotten_f is still inf -> not a restore.
+    restored_first = algo._expand(problem, nodes, root, tracker, counter)
+    assert restored_first == 0
+    assert len(root.children) == 2
+
+    # Simulate every child having been collapsed away (as _prune_worst_leaf
+    # would do): remove them and set root.forgotten_f, making root a leaf again.
+    for child_key in list(root.children):
+        del nodes[child_key]
+    root.children.clear()
+    root.forgotten_f = 5.0
+
+    # Re-expanding root now regenerates its subtree -> this is a restore.
+    restored_second = algo._expand(problem, nodes, root, tracker, counter)
+    assert restored_second == 2
+    assert restored_second == len(root.children)
+
+
+def test_dynamic_sma_collapse_restores_under_tight_memory_pressure():
+    # A RAM bound tight enough to force heavy collapsing should, over enough
+    # instances, eventually force at least one restore (a fully-collapsed
+    # node being re-expanded because it became the best leaf again).
+    tight_limits = SearchLimits(
+        max_memory_mb=512.0,
+        max_nodes=50_000,
+        dynamic_initial_ram_nodes=3,
+        dynamic_min_ram_nodes=2,
+        dynamic_max_ram_nodes=4,
+        epoch_generated_nodes=20,
+    )
+    instances = generate_puzzle_instances(seeds=list(range(10)), size=3, scramble_depths=[12])
+    results = [DynamicSMACollapse().search(i.problem, tight_limits) for i in instances]
+    assert any(r.nodes_collapsed > 0 for r in results)
+    assert any(r.nodes_restored > 0 for r in results)
+
+
 def test_two_level_dynamic_sma_runs_and_cleans_up_sqlite(tmp_path: Path):
     instance = generate_puzzle_instances(seeds=[4], size=3, scramble_depths=[15])[0]
     disk_dir = tmp_path / "disk_cache"
