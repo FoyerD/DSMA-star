@@ -1,7 +1,7 @@
 import statistics
 from pathlib import Path
 
-from algorithms import AStar, DynamicSMACollapse, ILBFS, SMAStar, TwoLevelDynamicSMA, normalize_memory_limits
+from algorithms import AStar, DynamicSMACollapse, ILBFS, MemoryLimit, SMAStar, TwoLevelDynamicSMA, normalize_memory_limits
 from algorithms.base import SearchLimits
 from benchmark.instance_generators import generate_puzzle_instances, generate_sokoban_instances
 from benchmark.metrics import aggregate_by_domain_and_algorithm
@@ -37,39 +37,42 @@ def test_astar_solves_easy_puzzle():
 
 
 def test_sma_star_solves_easy_puzzle():
-    result = SMAStar(memory_limit_nodes=1_000).search(_easy_puzzle(), LIMITS)
+    result = SMAStar(memory_limit=1_000).search(_easy_puzzle(), LIMITS)
     assert result.success
     assert result.solution_cost == 1
 
 
 def test_sma_star_default_memory_limit_is_50000():
     algorithm = SMAStar()
-    assert algorithm.memory_limit_nodes == 50_000
+    assert algorithm.memory_limit == MemoryLimit(50_000)
     assert algorithm.name == "SMA* (memory=50000)"
 
 
 def test_sma_star_name_includes_memory_limit():
-    assert SMAStar(memory_limit_nodes=10_000).name == "SMA* (memory=10000)"
-    assert SMAStar(memory_limit_nodes=25_000).name == "SMA* (memory=25000)"
+    assert SMAStar(memory_limit=10_000).name == "SMA* (memory=10000)"
+    assert SMAStar(memory_limit=25_000).name == "SMA* (memory=25000)"
 
 
 def test_normalize_memory_limits_accepts_int_or_list():
-    assert normalize_memory_limits(50_000) == [50_000]
-    assert normalize_memory_limits([10_000, 25_000, 50_000]) == [10_000, 25_000, 50_000]
-    assert normalize_memory_limits((10_000, 25_000)) == [10_000, 25_000]
+    assert normalize_memory_limits(50_000) == [MemoryLimit(50_000)]
+    assert normalize_memory_limits([10_000, 25_000, 50_000]) == [MemoryLimit(10_000), MemoryLimit(25_000), MemoryLimit(50_000)]
+    assert normalize_memory_limits((10_000, 25_000)) == [MemoryLimit(10_000), MemoryLimit(25_000)]
+    # Also accepts MemoryLimit objects directly
+    assert normalize_memory_limits(MemoryLimit(10_000)) == [MemoryLimit(10_000)]
+    assert normalize_memory_limits([MemoryLimit(10_000), 25_000]) == [MemoryLimit(10_000), MemoryLimit(25_000)]
 
 
 def test_multiple_sma_star_instances_run_independently_with_distinct_names():
     instances = generate_puzzle_instances(seeds=[6], size=3, scramble_depths=[10])
     memory_limits = [500, 1_000, 2_000]
-    algorithms = [SMAStar(memory_limit_nodes=m) for m in memory_limits]
+    algorithms = [SMAStar(memory_limit=m) for m in memory_limits]
     results = run_benchmark(instances, algorithms, LIMITS)
 
     names = [r.algorithm_name for r in results]
     assert names == ["SMA* (memory=500)", "SMA* (memory=1000)", "SMA* (memory=2000)"]
     # Each instance kept its own configured limit rather than sharing/mutating one.
     for algorithm, memory_limit in zip(algorithms, memory_limits):
-        assert algorithm.memory_limit_nodes == memory_limit
+        assert algorithm.memory_limit == MemoryLimit(memory_limit)
 
 
 def test_ilbfs_solves_easy_puzzle():
@@ -176,8 +179,8 @@ def test_benchmark_runner_produces_results_for_all_algorithms():
     instances += generate_sokoban_instances(levels=["easy"])
     algorithms = [
         AStar(),
-        SMAStar(memory_limit_nodes=1_000),
-        SMAStar(memory_limit_nodes=2_000),
+        SMAStar(memory_limit=1_000),
+        SMAStar(memory_limit=2_000),
         ILBFS(),
         DynamicSMACollapse(),
         TwoLevelDynamicSMA(keep_disk=False),

@@ -39,22 +39,25 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Union
 from domains.base import SearchProblem
 
 from ._run_utils import MemoryLimitError, NodeLimitError, RunTracker
-from .base import SearchAlgorithm, SearchLimits, SearchResult
+from .base import MemoryLimit, SearchAlgorithm, SearchLimits, SearchResult
 
 _INF = float("inf")
 
 DEFAULT_SMA_MEMORY_LIMIT_NODES = 50_000
 
 
-def normalize_memory_limits(value: Union[int, Iterable[int]]) -> List[int]:
-    """Coerce a single memory limit (or an iterable of them) into a list of ints.
+def normalize_memory_limits(value: Union[int, Iterable[int], MemoryLimit, Iterable[MemoryLimit]]) -> List[MemoryLimit]:
+    """Coerce a single memory limit (or an iterable of them) into a list of MemoryLimit objects.
 
-    Lets callers pass either one integer (`50_000`) or a list of them
-    (`[10_000, 25_000, 50_000]`) wherever a set of SMA* memory limits is expected.
+    Accepts ints (treated as fixed node counts), MemoryLimit objects directly,
+    or any mix thereof.
     """
-    if isinstance(value, int):
-        return [value]
-    return [int(v) for v in value]
+    if isinstance(value, (int, MemoryLimit)):
+        return [MemoryLimit(value) if isinstance(value, int) else value]
+    result: List[MemoryLimit] = []
+    for v in value:
+        result.append(MemoryLimit(v) if isinstance(v, int) else v)
+    return result
 
 
 @dataclass
@@ -85,15 +88,22 @@ class _Node:
 class SMAStar(SearchAlgorithm):
     """Simplified memory-bounded A*. See module docstring for limitations.
 
-    Each instance is bound to a single, fixed `memory_limit_nodes` -- to compare
-    SMA* under several memory budgets, construct one `SMAStar` instance per
-    budget (see `normalize_memory_limits`) rather than mutating one instance's
-    limit mid-run.
+    Each instance is bound to a single memory limit (int or percentage-based
+    ``MemoryLimit``).  To compare SMA* under several memory budgets, construct
+    one ``SMAStar`` instance per budget (see ``normalize_memory_limits``)
+    rather than mutating one instance's limit mid-run.  Percentage limits are
+    resolved against ``limits.total_nodes`` at search time.
     """
 
-    def __init__(self, memory_limit_nodes: int = DEFAULT_SMA_MEMORY_LIMIT_NODES) -> None:
-        self.memory_limit_nodes = memory_limit_nodes
-        self.name = f"SMA* (memory={memory_limit_nodes})"
+    def __init__(
+        self,
+        memory_limit: Union[int, MemoryLimit] = DEFAULT_SMA_MEMORY_LIMIT_NODES,
+    ) -> None:
+        if isinstance(memory_limit, int):
+            self.memory_limit = MemoryLimit(memory_limit)
+        else:
+            self.memory_limit = memory_limit
+        self.name = f"SMA* (memory={self.memory_limit})"
 
     def search(self, problem: SearchProblem, limits: SearchLimits) -> SearchResult:
         result = SearchResult(
@@ -102,7 +112,7 @@ class SMAStar(SearchAlgorithm):
             instance_id="",
         )
         tracker = RunTracker.start(limits.max_nodes, limits.max_memory_mb)
-        memory_limit_nodes = max(2, self.memory_limit_nodes)
+        memory_limit_nodes = self.memory_limit.resolve(limits.total_nodes)
         counter = itertools.count()
 
         start = problem.initial_state

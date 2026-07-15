@@ -18,7 +18,7 @@ from typing import List
 
 import psutil
 
-from algorithms import AStar, DynamicSMACollapse, ILBFS, SMAStar, TwoLevelDynamicSMA, normalize_memory_limits
+from algorithms import AStar, DynamicSMACollapse, ILBFS, MemoryLimit, SMAStar, TwoLevelDynamicSMA, normalize_memory_limits
 from algorithms.base import SearchAlgorithm, SearchLimits
 from benchmark.analyze import analyze_results
 from benchmark.instance_generators import (
@@ -101,18 +101,34 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sma-memory",
-        type=int,
+        type=MemoryLimit.parse,
         nargs="+",
-        default=[50_000],
+        default=[MemoryLimit(50_000)],
         help=(
-            "Memory limit(s), in max resident nodes, for SMA*. Provide multiple values "
-            "(e.g. --sma-memory 10000 25000 50000) to run SMA* once per memory limit, "
-            "each as its own independent algorithm instance."
+            "Memory limit(s) for SMA*. Accepts flat node counts (e.g. 10000) "
+            "or percentages of the instance's total_nodes (e.g. 10%%). Provide "
+            "multiple values to run SMA* once per limit, each as its own "
+            "independent algorithm instance."
         ),
     )
-    parser.add_argument("--dynamic-initial-ram", type=int, default=5_000)
-    parser.add_argument("--dynamic-min-ram", type=int, default=500)
-    parser.add_argument("--dynamic-max-ram", type=int, default=20_000)
+    parser.add_argument(
+        "--dynamic-initial-ram",
+        type=MemoryLimit.parse,
+        default=MemoryLimit(5_000),
+        help="Dynamic SMA*-Collapse initial RAM node budget (int or percentage, e.g. 10%%).",
+    )
+    parser.add_argument(
+        "--dynamic-min-ram",
+        type=MemoryLimit.parse,
+        default=MemoryLimit(500),
+        help="Dynamic SMA*-Collapse minimum RAM node budget (int or percentage).",
+    )
+    parser.add_argument(
+        "--dynamic-max-ram",
+        type=MemoryLimit.parse,
+        default=MemoryLimit(20_000),
+        help="Dynamic SMA*-Collapse maximum RAM node budget (int or percentage).",
+    )
     parser.add_argument("--two-level-initial-ram", type=int, default=2_000)
     parser.add_argument("--two-level-min-ram", type=int, default=500)
     parser.add_argument("--two-level-max-ram", type=int, default=10_000)
@@ -158,7 +174,7 @@ def build_algorithms(args: argparse.Namespace) -> List[SearchAlgorithm]:
     return [
         AStar(),
         DynamicSMACollapse(),
-        *[SMAStar(memory_limit_nodes=memory_limit) for memory_limit in sma_memory_limits],
+        *[SMAStar(memory_limit=ml) for ml in sma_memory_limits],
         ILBFS(),
         # TwoLevelDynamicSMA(keep_disk=args.keep_disk, disk_dir=output_dir / "disk_cache"),
     ]
@@ -184,9 +200,6 @@ def main() -> None:
         max_memory_mb=max_memory_mb,
         max_nodes=args.max_nodes,
         max_ram_nodes=args.max_nodes,
-        dynamic_initial_ram_nodes=args.dynamic_initial_ram,
-        dynamic_min_ram_nodes=args.dynamic_min_ram,
-        dynamic_max_ram_nodes=args.dynamic_max_ram,
         two_level_initial_ram_nodes=args.two_level_initial_ram,
         two_level_min_ram_nodes=args.two_level_min_ram,
         two_level_max_ram_nodes=args.two_level_max_ram,
@@ -194,11 +207,17 @@ def main() -> None:
         epoch_generated_nodes=args.epoch_generated_nodes,
     )
 
+    dynamic_overrides = {
+        "dynamic_initial_ram_nodes": args.dynamic_initial_ram,
+        "dynamic_min_ram_nodes": args.dynamic_min_ram,
+        "dynamic_max_ram_nodes": args.dynamic_max_ram,
+    }
+
     algorithms = build_algorithms(args)
 
     instances = build_instances(args)
     print(f"Running {len(algorithms)} algorithms on {len(instances)} instances...")
-    results = run_benchmark(instances, algorithms, limits)
+    results = run_benchmark(instances, algorithms, limits, dynamic_overrides=dynamic_overrides)
 
     save_results_csv(results, output_dir / "benchmark_results.csv")
     save_results_json(results, output_dir / "benchmark_results.json")

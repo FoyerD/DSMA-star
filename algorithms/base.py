@@ -2,10 +2,42 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from dataclasses import dataclass, field, replace
+from typing import Any, List, Optional, Union
 
 from domains.base import SearchProblem
+
+
+@dataclass(frozen=True)
+class MemoryLimit:
+    """A node-count memory limit, either a fixed integer or a percentage of total_nodes.
+
+    Percentages are stored as fractions (0.0-1.0); use the ``parse`` classmethod
+    to accept CLI strings like ``"10%"`` or ``"5000"``.
+    """
+
+    value: Union[int, float]
+    is_percent: bool = False
+
+    def resolve(self, total_nodes: int) -> int:
+        """Return the concrete node count for this limit."""
+        if self.is_percent:
+            return max(2, int(self.value * total_nodes))
+        return max(2, int(self.value))
+
+    @classmethod
+    def parse(cls, raw: str) -> MemoryLimit:
+        """Parse ``'5000'`` or ``'10%'`` into a MemoryLimit."""
+        s = raw.strip()
+        if s.endswith("%"):
+            return cls(value=float(s[:-1]) / 100.0, is_percent=True)
+        return cls(value=int(s), is_percent=False)
+
+    def __repr__(self) -> str:
+        if self.is_percent:
+            pct = self.value * 100
+            return f"{pct:.4g}%"
+        return str(self.value)
 
 
 @dataclass
@@ -43,6 +75,28 @@ class SearchLimits:
 
     # Shared adaptation epoch length (number of generated nodes between adjustments).
     epoch_generated_nodes: int = 1_000
+
+    # Total nodes in the optimal A* search tree for the current instance.
+    # Used to resolve percentage-based MemoryLimit values at search time.
+    total_nodes: int = 5_000_000
+
+    def resolve_for_instance(
+        self,
+        total_nodes: int,
+        dynamic_overrides: Optional[dict[str, MemoryLimit]] = None,
+    ) -> SearchLimits:
+        """Return a new SearchLimits with percentage-based limits resolved for an instance.
+
+        ``dynamic_overrides`` maps field names (e.g. ``"dynamic_initial_ram_nodes"``)
+        to unresolved ``MemoryLimit`` objects.  Any field present in the overrides
+        is resolved via ``MemoryLimit.resolve(total_nodes)`` and set as an int;
+        fields not in the overrides keep their current int values unchanged.
+        """
+        updates: dict[str, int] = {"total_nodes": total_nodes}
+        if dynamic_overrides:
+            for field_name, mem_limit in dynamic_overrides.items():
+                updates[field_name] = mem_limit.resolve(total_nodes)
+        return replace(self, **updates)
 
 
 @dataclass
