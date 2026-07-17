@@ -118,7 +118,8 @@ def test_dynamic_sma_collapse_expand_counts_restored_only_on_reexpansion():
     nodes = {goal: root}
 
     # First expansion: forgotten_f is still inf -> not a restore.
-    restored_first = algo._expand(problem, nodes, root, tracker, counter)
+    goal_first, restored_first = algo._expand(problem, nodes, root, tracker, counter)
+    assert goal_first is None
     assert restored_first == 0
     assert len(root.children) == 2
 
@@ -130,7 +131,8 @@ def test_dynamic_sma_collapse_expand_counts_restored_only_on_reexpansion():
     root.forgotten_f = 5.0
 
     # Re-expanding root now regenerates its subtree -> this is a restore.
-    restored_second = algo._expand(problem, nodes, root, tracker, counter)
+    goal_second, restored_second = algo._expand(problem, nodes, root, tracker, counter)
+    assert goal_second is None
     assert restored_second == 2
     assert restored_second == len(root.children)
 

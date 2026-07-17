@@ -37,6 +37,8 @@ import itertools
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
+from sortedcontainers import SortedList
+
 from domains.base import SearchProblem
 
 from ._run_utils import MemoryLimitError, NodeLimitError, RunTracker
@@ -101,6 +103,11 @@ def _heap_entry(node: _Node) -> Tuple[Tuple[float, int], int, _Node]:
     return (_best_score(node), node.order, node)
 
 
+def _worst_sort_key(node: _Node) -> Tuple[float, int]:
+    """Sort key for worst_leaves: (selection_f, order). Ascending sort; worst leaf is at the end."""
+    return (node.selection_f(), node.order)
+
+
 class SMAStar(SearchAlgorithm):
     """Simplified memory-bounded A*. See module docstring for limitations.
 
@@ -149,6 +156,9 @@ class SMAStar(SearchAlgorithm):
         # --- Heap-based leaf tracking for O(log n) selection ---
         active_leaves: Set[Any] = {start_key}
         leaf_heap: list = [_heap_entry(root)]
+        # --- SortedList for O(log n) worst-leaf pruning ---
+        worst_leaves: SortedList[_Node] = SortedList(key=_worst_sort_key)
+        worst_leaves.add(root)
 
         nodes_expanded = 0
         max_frontier_size = 1
@@ -169,7 +179,12 @@ class SMAStar(SearchAlgorithm):
                     result.solution_actions = self._reconstruct(nodes, leaf.key)
                     break
 
-                # Expand: remove leaf from active set (it gains children)
+                # Expand: remove leaf from active set (it gains children).
+                # Remove BEFORE _expand because it mutates leaf.children,
+                # which would break SortedList's dataclass __eq__ lookup.
+                active_leaves.discard(leaf.key)
+                worst_leaves.discard(leaf)
+
                 children_before = set(leaf.children)
                 goal_node = self._expand(problem, nodes, leaf, tracker, counter)
                 nodes_expanded += 1
@@ -182,15 +197,18 @@ class SMAStar(SearchAlgorithm):
 
                 new_child_keys = leaf.children - children_before
                 if new_child_keys:
-                    active_leaves.discard(leaf.key)
                     for child_key in new_child_keys:
                         child = nodes[child_key]
                         active_leaves.add(child_key)
+                        worst_leaves.add(child)
                         heapq.heappush(leaf_heap, _heap_entry(child))
-                # If no new children, leaf stays in active_leaves (dead_end set by _expand)
+                else:
+                    # No new children -- leaf stays as a leaf (dead_end set by _expand)
+                    active_leaves.add(leaf.key)
+                    worst_leaves.add(leaf)
 
                 while len(nodes) > memory_limit_nodes:
-                    pruned = self._prune_worst_leaf(nodes, root.key, active_leaves, leaf_heap)
+                    pruned = self._prune_worst_leaf(nodes, root.key, active_leaves, leaf_heap, worst_leaves)
                     if pruned is None:
                         result.memory_limit_reached = True
                         break
@@ -283,34 +301,38 @@ class SMAStar(SearchAlgorithm):
         root_key: Any,
         active_leaves: Set[Any],
         leaf_heap: list,
+        worst_leaves: SortedList,
     ) -> Optional[_Node]:
-        """Delete the worst leaf to free memory. Returns the pruned node, or None."""
-        worst: Optional[_Node] = None
-        for key in list(active_leaves):
-            node = nodes.get(key)
-            if node is None or node.key == root_key:
-                continue
-            if worst is None or _worst_score(node) < _worst_score(worst):
-                worst = node
-        if worst is None:
-            return None
+        """Delete the worst leaf to free memory. Returns the pruned node, or None.
 
-        active_leaves.discard(worst.key)
-        del nodes[worst.key]
-        parent = nodes.get(worst.parent_key)
-        if parent is not None:
-            parent.children.discard(worst.key)
-            # Back up the MINIMUM f in the deleted subtree (not selection_f,
-            # which is the max).  For a leaf, the subtree minimum is
-            # min(base_f, forgotten_f) — capturing both the node's own f
-            # and any previously forgotten descendants.
-            deleted_min_f = min(worst.base_f, worst.forgotten_f)
-            parent.forgotten_f = min(parent.forgotten_f, deleted_min_f)
-            if not parent.children:
-                parent.dead_end = False
-                active_leaves.add(parent.key)
-                heapq.heappush(leaf_heap, _heap_entry(parent))
-        return worst
+        Uses the SortedList for O(log L) worst-leaf removal instead of O(L) scan.
+        Skips stale entries (nodes already removed from `nodes` dict).
+        """
+        while worst_leaves:
+            candidate = worst_leaves[-1]
+            if candidate.key == root_key:
+                worst_leaves.pop()
+                continue
+            if candidate.key not in nodes:
+                worst_leaves.pop()
+                active_leaves.discard(candidate.key)
+                continue
+            worst = candidate
+            worst_leaves.pop()
+            active_leaves.discard(worst.key)
+            del nodes[worst.key]
+            parent = nodes.get(worst.parent_key)
+            if parent is not None:
+                parent.children.discard(worst.key)
+                deleted_min_f = min(worst.base_f, worst.forgotten_f)
+                parent.forgotten_f = min(parent.forgotten_f, deleted_min_f)
+                if not parent.children:
+                    parent.dead_end = False
+                    active_leaves.add(parent.key)
+                    worst_leaves.add(parent)
+                    heapq.heappush(leaf_heap, _heap_entry(parent))
+            return worst
+        return None
 
     @staticmethod
     def _reconstruct(nodes: Dict[Any, _Node], goal_key: Any) -> List[Any]:
