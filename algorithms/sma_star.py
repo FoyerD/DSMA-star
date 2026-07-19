@@ -216,6 +216,13 @@ class SMAStar(SearchAlgorithm):
                 if result.memory_limit_reached:
                     break
 
+                # Periodically rebuild the heap to purge stale entries that
+                # keep pruned _Node objects alive and inflate peak RSS.
+                if len(leaf_heap) > max(1000, 3 * len(active_leaves)):
+                    leaf_heap[:] = [_heap_entry(nodes[k]) for k in active_leaves
+                                    if k in nodes and not nodes[k].dead_end]
+                    heapq.heapify(leaf_heap)
+
                 max_frontier_size = max(max_frontier_size, len(active_leaves))
         except NodeLimitError:
             result.node_limit_reached = True

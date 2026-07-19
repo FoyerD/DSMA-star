@@ -221,8 +221,8 @@ class DynamicSMACollapse(SearchAlgorithm):
                     if collapse_ratio > 0.50:
                         b_ram = min(2 * b_ram, b_ram_max)
                         number_of_ram_increases += 1
-                    elif collapse_ratio < 0.10:
-                        b_ram = max(b_ram // 2, b_ram_min)
+                    elif collapse_ratio < 0.05:
+                        b_ram = max(b_ram * 2 // 3, b_ram_min)
                         number_of_ram_decreases += 1
                         while len(nodes) > b_ram:
                             pruned = self._prune_worst_leaf(nodes, root.key, active_leaves, leaf_heap, worst_leaves)
@@ -237,6 +237,13 @@ class DynamicSMACollapse(SearchAlgorithm):
 
                 if result.memory_limit_reached:
                     break
+
+                # Periodically rebuild the heap to purge stale entries that
+                # keep pruned _Node objects alive and inflate peak RSS.
+                if len(leaf_heap) > max(1000, 3 * len(active_leaves)):
+                    leaf_heap[:] = [_heap_entry(nodes[k]) for k in active_leaves
+                                    if k in nodes and not nodes[k].dead_end]
+                    heapq.heapify(leaf_heap)
 
                 max_frontier_size = max(max_frontier_size, len(active_leaves))
         except NodeLimitError:

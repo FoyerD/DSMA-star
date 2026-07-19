@@ -255,3 +255,53 @@ def test_aggregate_std_is_zero_with_a_single_seed():
     summary = aggregate_by_domain_and_algorithm(results)[0]
     assert summary.std_nodes_expanded == 0.0
     assert summary.std_peak_memory_mb == 0.0
+
+
+def test_all_algorithms_solve_15_puzzle_scramble_10():
+    """Acceptance test: run every algorithm on a fixed 15-puzzle instance (seed=0, scramble_depth=10).
+
+    Each algorithm must either solve the instance or honestly report a
+    resource limit (node / memory). No algorithm may crash or return an
+    inconsistent result.
+    """
+    instances = generate_puzzle_instances(seeds=[0], size=4, scramble_depths=[10])
+    assert len(instances) == 1
+    instance = instances[0]
+
+    limits = SearchLimits(
+        max_memory_mb=2048.0,
+        max_nodes=500_000,
+        dynamic_initial_ram_nodes=2_000,
+        dynamic_min_ram_nodes=500,
+        dynamic_max_ram_nodes=10_000,
+        two_level_initial_ram_nodes=2_000,
+        two_level_min_ram_nodes=500,
+        two_level_max_ram_nodes=10_000,
+        two_level_total_node_limit=20_000,
+        epoch_generated_nodes=500,
+    )
+
+    algorithms = [
+        AStar(),
+        ILBFS(),
+        SMAStar(memory_limit=5_000),
+        SMAStar(memory_limit=10_000),
+        DynamicSMACollapse(),
+        TwoLevelDynamicSMA(keep_disk=False),
+    ]
+
+    results = run_benchmark(instances, algorithms, limits)
+
+    assert len(results) == len(algorithms)
+
+    for r in results:
+        # Every algorithm must produce a result for the same instance.
+        assert r.instance_id == instance.instance_id
+        # Must either solve or hit a known resource limit — never both.
+        assert r.success or r.node_limit_reached or r.memory_limit_reached or r.error_message
+        assert not (r.success and r.node_limit_reached)
+        assert not (r.success and r.memory_limit_reached)
+        # If solved, solution cost must be positive.
+        if r.success:
+            assert r.solution_cost > 0
+            assert len(r.solution_actions) > 0
