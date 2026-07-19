@@ -114,19 +114,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dynamic-initial-ram",
         type=MemoryLimit.parse,
-        default=MemoryLimit.parse('5%'),
+        default=MemoryLimit.parse('20%'),
         help="Dynamic SMA*-Collapse initial RAM node budget (int or percentage, e.g. 10%%).",
     )
     parser.add_argument(
         "--dynamic-min-ram",
         type=MemoryLimit.parse,
-        default=MemoryLimit.parse('2%'),
+        default=MemoryLimit.parse('15%'),
         help="Dynamic SMA*-Collapse minimum RAM node budget (int or percentage).",
     )
     parser.add_argument(
         "--dynamic-max-ram",
         type=MemoryLimit.parse,
-        default=MemoryLimit.parse('20%'),
+        default=MemoryLimit.parse('40%'),
         help="Dynamic SMA*-Collapse maximum RAM node budget (int or percentage).",
     )
     parser.add_argument("--two-level-initial-ram", type=int, default=2_000)
