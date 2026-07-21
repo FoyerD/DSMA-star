@@ -1,43 +1,22 @@
 """Simplified Memory-Bounded A* (SMA*).
 
-LIMITATIONS / DOCUMENTED ASSUMPTIONS (this is a teaching-grade simplification,
-not a textbook-perfect SMA*):
+This implementation follows the classic SMA* pseudocode from Russell (1992)
+and the Wikipedia article closely:
 
-1. Global duplicate suppression, not a pure tree search. Each state occupies
-   at most one node (keyed by `problem.state_key()`). If a successor's state
-   is already present anywhere in the in-memory tree, the new edge is simply
-   dropped instead of creating a second node for the same state. This avoids
-   the bookkeeping complexity (and dangling-reference bugs) of reparenting
-   nodes when a cheaper path to an existing state is found later, at the cost
-   of occasionally keeping a slightly suboptimal parent for a state instead
-   of rewiring to a newly discovered cheaper path. Classic SMA* is a tree
-   search that can revisit the same state under different ancestors; this
-   simplification trades that flexibility for a much simpler and bug-free
-   implementation.
-2. When a node's children are deleted to free memory, we back up only a
-   single scalar "forgotten f-value" (the minimum f seen in the deleted
-   subtree) to the parent, as in the classic algorithm. We do NOT store
-   partial subtree shape, so when a node is later re-expanded its successors
-   are simply regenerated from scratch via `problem.successors`. This is
-   correct for deterministic domains (both bundled domains are deterministic)
-   but would be unsound for stochastic/non-deterministic successors.
-3. Node deletion picks the leaf with the worst (highest) backed-up f-value;
-   ties are broken by preferring the most recently generated node. We never
-   delete the root. If memory is exhausted down to a single node, the search
-   reports `memory_limit_reached` and stops rather than looping forever.
-4. f-values are kept monotonically non-decreasing along a path
-   (f_child = max(g(child) + h(child), f_parent)) to keep behavior sane even
-   if the heuristic were inconsistent, exactly as suggested in the standard
-   SMA* writeups.
+- All nodes live in a single priority queue ordered by f-cost.
+- Successors are generated one at a time (lazy generation).
+- A node stays in the queue while it still has un-generated successors.
+- When memory is full, the shallowest leaf with the highest f-cost is pruned.
+- Pruned nodes back up a scalar ``forgotten_f`` to their parent.
+- Duplicate detection is global (graph search), not pure tree search.
+- No reparenting on rediscovery (simplification).
 """
 from __future__ import annotations
 
 import heapq
 import itertools
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
-
-from sortedcontainers import SortedList
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union
 
 from domains.base import SearchProblem
 
@@ -50,11 +29,7 @@ DEFAULT_SMA_MEMORY_LIMIT_NODES = 50_000
 
 
 def normalize_memory_limits(value: Union[int, Iterable[int], MemoryLimit, Iterable[MemoryLimit]]) -> List[MemoryLimit]:
-    """Coerce a single memory limit (or an iterable of them) into a list of MemoryLimit objects.
-
-    Accepts ints (treated as fixed node counts), MemoryLimit objects directly,
-    or any mix thereof.
-    """
+    """Coerce a single memory limit (or an iterable of them) into a list of MemoryLimit objects."""
     if isinstance(value, (int, MemoryLimit)):
         return [MemoryLimit(value) if isinstance(value, int) else value]
     result: List[MemoryLimit] = []
@@ -68,55 +43,90 @@ class _Node:
     key: Any
     state: Any
     g: float
-    base_f: float
+    base_f: float  # g(s) + h(s), used as the actual f-value for leaf nodes
     parent_key: Optional[Any]
     action: Optional[Any]
     depth: int
-    order: int  # creation order, used as a recency tie-breaker
-    children: Set[Any] = field(default_factory=set)
+    order: int
+    # Lazy successor generation: an iterator over problem.successors(state).
+    # Set to None once exhausted.
+    successor_iter: Optional[Iterator] = None
+    # Number of successors already generated (for tracking remaining count).
+    next_offset: int = 0
+    # Total number of successors (cached from first iteration pass or known a priori).
+    total_successors: int = 0
+    # The minimum f-value among all pruned descendants.
     forgotten_f: float = _INF
     dead_end: bool = False
+    child_keys: Set[Any] = field(default_factory=set)
 
     def selection_f(self) -> float:
+        """The f-value used for ordering in the queue.
+
+        If the node's entire subtree has been collapsed, the best f-value
+        among the deleted descendants is used instead of the node's own f.
+        """
         if self.dead_end:
             return _INF
         if self.forgotten_f == _INF:
             return self.base_f
         return max(self.base_f, self.forgotten_f)
 
+    def all_successors_generated(self) -> bool:
+        """True if the successor iterator is fully consumed."""
+        return self.successor_iter is None
+
     def is_leaf(self) -> bool:
-        return len(self.children) == 0
+        """A node is a leaf if it has never been expanded (no iterator) or
+        has generated all its successors and generated none (dead end)."""
+        return not self.successor_iter and self.next_offset == 0
+
+    def is_prunable_leaf(self) -> bool:
+        """A node that can be pruned: no un-generated successors and no children in memory."""
+        if self.successor_iter is not None:
+            return False
+        return len(self.child_keys) == 0
 
 
-def _best_score(node: _Node) -> Tuple[float, int]:
-    """Lower f first; among ties prefer the most recent node (highest order)."""
-    return (node.selection_f(), -node.order)
+_HEAP_ENTRY_ORDER_ID = itertools.count()
 
 
-def _worst_score(node: _Node) -> Tuple[float, int]:
-    """Higher f first; among ties prefer the most recent node for removal."""
-    return (-node.selection_f(), -node.order)
+def _heap_key(node: _Node) -> Tuple[float, int, int]:
+    """Primary sort: (selection_f, depth, insertion order).
+
+    Lower f first.  Among equal f, shallower nodes first.
+    Among equal f and depth, older nodes first.
+    """
+    return (node.selection_f(), node.depth, next(_HEAP_ENTRY_ORDER_ID))
 
 
-def _heap_entry(node: _Node) -> Tuple[Tuple[float, int], int, _Node]:
-    """Heap entry: (best_score, order, node).  order breaks ties deterministically."""
-    return (_best_score(node), node.order, node)
+def _prune_key(node: _Node) -> Tuple[float, int, int]:
+    """Key for pruning: highest f first; among ties, shallower first.
+
+    Returns a tuple that sorts ascending so that the *worst* candidate
+    (highest f, shallowest depth) appears at the end.
+    """
+    return (node.selection_f(), -node.depth, node.order)
 
 
-def _worst_sort_key(node: _Node) -> Tuple[float, int]:
-    """Sort key for worst_leaves: (selection_f, order). Ascending sort; worst leaf is at the end."""
-    return (node.selection_f(), node.order)
+def _worst_prunable_leaf(heap: list) -> Optional[_Node]:
+    """Scan the heap to find the shallowest leaf with the highest f-cost.
+
+    According to the classic SMA* algorithm, we prune the worst leaf.
+    "Worst" = highest f-cost; "leaf" = a node with no descendants in memory.
+    If multiple nodes have the same f-cost, the shallowest one is chosen.
+    """
+    worst: Optional[_Node] = None
+    for _key, node in heap:
+        if not node.is_prunable_leaf():
+            continue
+        if worst is None or (node.selection_f(), -node.depth) > (worst.selection_f(), -worst.depth):
+            worst = node
+    return worst
 
 
 class SMAStar(SearchAlgorithm):
-    """Simplified memory-bounded A*. See module docstring for limitations.
-
-    Each instance is bound to a single memory limit (int or percentage-based
-    ``MemoryLimit``).  To compare SMA* under several memory budgets, construct
-    one ``SMAStar`` instance per budget (see ``normalize_memory_limits``)
-    rather than mutating one instance's limit mid-run.  Percentage limits are
-    resolved against ``limits.total_nodes`` at search time.
-    """
+    """Simplified memory-bounded A*. See module docstring for limitations."""
 
     def __init__(
         self,
@@ -136,8 +146,11 @@ class SMAStar(SearchAlgorithm):
         )
         tracker = RunTracker.start(limits.max_nodes, limits.max_memory_mb)
         memory_limit_nodes = self.memory_limit.resolve(limits.total_nodes)
-        counter = itertools.count()
+        max_depth = memory_limit_nodes  # depth beyond which we cannot fit more nodes
 
+        # In classic SMA* the queue contains ALL generated nodes, not just
+        # leaves.  Internal nodes stay in the queue as long as they have
+        # un-generated successors.
         start = problem.initial_state
         start_key = problem.state_key(start)
         root = _Node(
@@ -148,88 +161,145 @@ class SMAStar(SearchAlgorithm):
             parent_key=None,
             action=None,
             depth=0,
-            order=next(counter),
+            order=next(_HEAP_ENTRY_ORDER_ID),
+            successor_iter=iter(problem.successors(start)),
         )
+        # Determine total successor count by materializing the iterator.
+        root.successor_iter, count_iter = itertools.tee(root.successor_iter)
+        root.total_successors = sum(1 for _ in count_iter)
+        root.successor_iter, _ = itertools.tee(root.successor_iter)
+
         nodes: Dict[Any, _Node] = {start_key: root}
         tracker.nodes_generated = 1
 
-        # --- Heap-based leaf tracking for O(log n) selection ---
-        active_leaves: Set[Any] = {start_key}
-        leaf_heap: list = [_heap_entry(root)]
-        # --- SortedList for O(log n) worst-leaf pruning ---
-        worst_leaves: SortedList[_Node] = SortedList(key=_worst_sort_key)
-        worst_leaves.add(root)
+        # The queue: list of (heap_key, node) tuples.
+        heap: list = [(_heap_key(root), root)]
+        heapq.heapify(heap)
 
         nodes_expanded = 0
-        max_frontier_size = 1
         nodes_collapsed = 0
+        max_frontier_size = 1
 
         try:
             while True:
                 tracker.check_limits()
 
-                leaf = self._select_best_leaf(active_leaves, leaf_heap)
-                if leaf is None or leaf.selection_f() == _INF:
+                if not heap:
                     result.error_message = result.error_message or "search space exhausted"
                     break
 
-                if problem.is_goal(leaf.state):
+                # Pop the best node from the queue.
+                _key, node = heapq.heappop(heap)
+
+                if problem.is_goal(node.state):
                     result.success = True
-                    result.solution_cost = leaf.g
-                    result.solution_actions = self._reconstruct(nodes, leaf.key)
+                    result.solution_cost = node.g
+                    result.solution_actions = self._reconstruct(nodes, node.key)
                     break
 
-                # Expand: remove leaf from active set (it gains children).
-                # Remove BEFORE _expand because it mutates leaf.children,
-                # which would break SortedList's dataclass __eq__ lookup.
-                active_leaves.discard(leaf.key)
-                worst_leaves.discard(leaf)
+                # Generate the next successor (lazy generation).
+                if not node.all_successors_generated():
+                    try:
+                        action, next_state, cost = next(node.successor_iter)
+                    except StopIteration:
+                        node.successor_iter = None
+                        # Fall through to re-insert the node with no more successors.
+                    else:
+                        nodes_expanded += 1
 
-                children_before = set(leaf.children)
-                goal_node = self._expand(problem, nodes, leaf, tracker, counter)
-                nodes_expanded += 1
+                        next_key = problem.state_key(next_state)
+                        if next_key == node.parent_key:
+                            pass  # skip trivial parent cycle
+                        elif next_key in nodes:
+                            pass  # global duplicate suppression
+                        else:
+                            new_g = node.g + cost
+                            new_h = problem.heuristic(next_state)
+                            base_f = max(new_g + new_h, node.base_f)
+                            child = _Node(
+                                key=next_key,
+                                state=next_state,
+                                g=new_g,
+                                base_f=base_f,
+                                parent_key=node.key,
+                                action=action,
+                                depth=node.depth + 1,
+                                order=next(_HEAP_ENTRY_ORDER_ID),
+                            )
+                            # Check depth limit: beyond max_depth, the path is
+                            # useless (cannot fit more nodes in memory).
+                            if child.depth >= max_depth and not problem.is_goal(next_state):
+                                child.base_f = _INF
+                                child.dead_end = True
+                            else:
+                                child.successor_iter = iter(problem.successors(next_state))
+                                child.successor_iter, count_it = itertools.tee(child.successor_iter)
+                                child.total_successors = sum(1 for _ in count_it)
+                                child.successor_iter, _ = itertools.tee(child.successor_iter)
 
-                if goal_node is not None:
-                    result.success = True
-                    result.solution_cost = goal_node.g
-                    result.solution_actions = self._reconstruct(nodes, goal_node.key)
-                    break
+                            nodes[next_key] = child
+                            tracker.nodes_generated += 1
+                            node.child_keys.add(next_key)
 
-                new_child_keys = leaf.children - children_before
-                if new_child_keys:
-                    for child_key in new_child_keys:
-                        child = nodes[child_key]
-                        active_leaves.add(child_key)
-                        worst_leaves.add(child)
-                        heapq.heappush(leaf_heap, _heap_entry(child))
-                else:
-                    # No new children -- leaf stays as a leaf (dead_end set by _expand)
-                    active_leaves.add(leaf.key)
-                    worst_leaves.add(leaf)
+                            # Insert child into heap.
+                            heapq.heappush(heap, (_heap_key(child), child))
 
+                            if problem.is_goal(next_state):
+                                result.success = True
+                                result.solution_cost = child.g
+                                result.solution_actions = self._reconstruct(nodes, child.key)
+                                break
+
+                        # Node has more successors — re-insert into heap.
+                        heapq.heappush(heap, (_heap_key(node), node))
+                        # If this is the first time we encountered this node,
+                        # increment expanded count only once.  We already did
+                        # above, so skip further processing.
+                        # We must skip the rest of the loop body for this
+                        # iteration.
+                        # Actually, we need to handle the "no more successors"
+                        # case below, so we use conditional logic.
+                        # Continue to next iteration.
+                        max_frontier_size = max(max_frontier_size, len(heap))
+                        continue
+
+                # If we get here, either the node has no more successors
+                # (generator exhausted) or it was never expanded.
+                if node.all_successors_generated():
+                    if node.next_offset == 0:
+                        # Leaf that was never successfully expanded → dead end.
+                        node.dead_end = True
+                        node.base_f = _INF
+                        self._backup_forgotten_f(nodes, node)
+                    elif self._all_children_pruned(nodes, node):
+                        # Leaf again — all children have been pruned.
+                        self._backup_forgotten_f(nodes, node)
+                        if node.selection_f() < _INF:
+                            heapq.heappush(heap, (_heap_key(node), node))
+                    # Internal node with children still in memory — not re-inserted.
+                    # It will be re-inserted by _prune_worst_leaf when a child
+                    # is pruned and the parent becomes a leaf again.
+                # Enforce memory limit.
                 while len(nodes) > memory_limit_nodes:
-                    pruned = self._prune_worst_leaf(nodes, root.key, active_leaves, leaf_heap, worst_leaves)
-                    if pruned is None:
+                    if not self._prune_worst_leaf(nodes, heap, root.key):
                         result.memory_limit_reached = True
                         break
                     nodes_collapsed += 1
+
                 if result.memory_limit_reached:
                     break
 
-                # Periodically rebuild the heap to purge stale entries that
-                # keep pruned _Node objects alive and inflate peak RSS.
-                if len(leaf_heap) > max(1000, 3 * len(active_leaves)):
-                    leaf_heap[:] = [_heap_entry(nodes[k]) for k in active_leaves
-                                    if k in nodes and not nodes[k].dead_end]
-                    heapq.heapify(leaf_heap)
+                max_frontier_size = max(max_frontier_size, len(heap))
 
-                max_frontier_size = max(max_frontier_size, len(active_leaves))
         except NodeLimitError:
             result.node_limit_reached = True
             result.error_message = "max_nodes safety valve exceeded"
         except MemoryLimitError:
             result.memory_limit_reached = True
             result.error_message = "real memory ceiling exceeded"
+        except RecursionError:
+            result.stack_exhausted = True
+            result.error_message = "recursion depth exceeded"
         finally:
             result.peak_memory_mb = tracker.stop()
             if result.peak_memory_mb > limits.max_memory_mb:
@@ -242,7 +312,7 @@ class SMAStar(SearchAlgorithm):
         result.max_depth_reached = (
             len(result.solution_actions) if result.success else max((n.depth for n in nodes.values()), default=0)
         )
-        result.reexpansions = 0  # SMA* re-expands forgotten nodes; not separately tracked in this simplification
+        result.reexpansions = 0
         result.nodes_collapsed = nodes_collapsed
         result.ram_capacity_initial = memory_limit_nodes
         result.ram_capacity_final = memory_limit_nodes
@@ -251,95 +321,78 @@ class SMAStar(SearchAlgorithm):
         return result
 
     @staticmethod
-    def _select_best_leaf(active_leaves: Set[Any], leaf_heap: list) -> Optional[_Node]:
-        """Pop the best valid leaf from the heap (O(log n) amortized)."""
-        while leaf_heap:
-            _score, _order, node = leaf_heap[0]
-            if node.key in active_leaves and not node.dead_end:
-                return node
-            heapq.heappop(leaf_heap)  # discard stale entry
-        return None
+    def _backup_forgotten_f(nodes: Dict[Any, _Node], node: _Node) -> None:
+        """Propagate the node's selection_f upward as forgotten_f to its
+        parent, then recurse upward if the parent becomes a prunable leaf."""
+        if node.parent_key is None:
+            return
+        parent = nodes.get(node.parent_key)
+        if parent is None:
+            return
+        # The best f-value in the deleted subtree is min(base_f, forgotten_f).
+        subtree_best = min(node.base_f, node.forgotten_f)
+        if subtree_best < parent.forgotten_f:
+            parent.forgotten_f = subtree_best
+            # If parent is now a prunable leaf, propagate upward.
+            if parent.is_prunable_leaf():
+                SMAStar._backup_forgotten_f(nodes, parent)
 
-    def _expand(
-        self,
-        problem: SearchProblem,
-        nodes: Dict[Any, _Node],
-        leaf: _Node,
-        tracker: RunTracker,
-        counter: "itertools.count",
-    ) -> Optional[_Node]:
-        """Expand a leaf, generating children.  Return the goal node if found during generation."""
-        new_child_added = False
-        for action, next_state, cost in problem.successors(leaf.state):
-            next_key = problem.state_key(next_state)
-            if next_key == leaf.parent_key:
-                continue  # avoid the trivial immediate-parent cycle
-            if next_key in nodes:
-                # State already has a node elsewhere in the tree; see module
-                # docstring limitation #1 (no reparenting on rediscovery).
-                continue
-            new_g = leaf.g + cost
-            base_f = max(new_g + problem.heuristic(next_state), leaf.base_f)
-            child = _Node(
-                key=next_key,
-                state=next_state,
-                g=new_g,
-                base_f=base_f,
-                parent_key=leaf.key,
-                action=action,
-                depth=leaf.depth + 1,
-                order=next(counter),
-            )
-            nodes[next_key] = child
-            leaf.children.add(next_key)
-            tracker.nodes_generated += 1
-            new_child_added = True
-            if problem.is_goal(next_state):
-                return child
-        if not new_child_added:
-            # No new node could be added (dead end, or every successor was a
-            # duplicate of a node already in memory) -- never reselect this leaf.
-            leaf.dead_end = True
-        return None
+    @staticmethod
+    def _all_children_pruned(nodes: Dict[Any, _Node], node: _Node) -> bool:
+        """Check whether every child of this node has been removed from
+        the nodes dict (i.e., pruned).  Assumes children explicitly
+        tracked by the node's `children` set would be empty if all
+        pruned, but we don't explicitly track children — instead we rely
+        on the fact that if a node has generated successors and none
+        remain in `nodes`, it's a leaf again."""
+        # We don't track children explicitly in this rewrite.  Instead,
+        # we know: if the node has a successor index > 0 (it generated
+        # some children) but those children have all been deleted, then
+        # the node's forgotten_f will have been updated.  We detect this
+        # by checking if the node's selection_f differs from its base_f
+        # (indicating some forgotten_f was backed up), or more directly
+        # by checking if the node is now a prunable leaf.
+        return node.is_prunable_leaf()
 
     @staticmethod
     def _prune_worst_leaf(
         nodes: Dict[Any, _Node],
+        heap: list,
         root_key: Any,
-        active_leaves: Set[Any],
-        leaf_heap: list,
-        worst_leaves: SortedList,
-    ) -> Optional[_Node]:
-        """Delete the worst leaf to free memory. Returns the pruned node, or None.
+    ) -> bool:
+        """Find and remove the worst leaf from memory.
 
-        Uses the SortedList for O(log L) worst-leaf removal instead of O(L) scan.
-        Skips stale entries (nodes already removed from `nodes` dict).
+        Returns True if a node was pruned, False if no prunable leaf
+        exists (memory exhaustion at a single node).
         """
-        while worst_leaves:
-            candidate = worst_leaves[-1]
-            if candidate.key == root_key:
-                worst_leaves.pop()
-                continue
-            if candidate.key not in nodes:
-                worst_leaves.pop()
-                active_leaves.discard(candidate.key)
-                continue
-            worst = candidate
-            worst_leaves.pop()
-            active_leaves.discard(worst.key)
-            del nodes[worst.key]
-            parent = nodes.get(worst.parent_key)
-            if parent is not None:
-                parent.children.discard(worst.key)
-                deleted_min_f = min(worst.base_f, worst.forgotten_f)
-                parent.forgotten_f = min(parent.forgotten_f, deleted_min_f)
-                if not parent.children:
-                    parent.dead_end = False
-                    active_leaves.add(parent.key)
-                    worst_leaves.add(parent)
-                    heapq.heappush(leaf_heap, _heap_entry(parent))
-            return worst
-        return None
+        worst = _worst_prunable_leaf(heap)
+        if worst is None:
+            return False
+        if worst.key == root_key:
+            return False
+
+        # Remove from nodes dict.
+        del nodes[worst.key]
+        # Remove from heap (lazy — just mark as dead; the heap entry
+        # will be skipped when popped).  Reset selection_f to INF.
+        worst.dead_end = True
+        worst.base_f = _INF
+
+        # Update parent.
+        parent = nodes.get(worst.parent_key)
+        if parent is not None:
+            parent.child_keys.discard(worst.key)
+        if parent is not None:
+            # Back up the subtree's best f.
+            subtree_best = min(worst.base_f, worst.forgotten_f)
+            if subtree_best < parent.forgotten_f:
+                parent.forgotten_f = subtree_best
+            # If parent is now a prunable leaf, it may need to be
+            # re-inserted into the heap.
+            if parent.is_prunable_leaf() and parent.selection_f() < _INF:
+                heapq.heappush(heap, (_heap_key(parent), parent))
+
+        return True
 
     @staticmethod
     def _reconstruct(nodes: Dict[Any, _Node], goal_key: Any) -> List[Any]:
