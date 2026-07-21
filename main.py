@@ -106,9 +106,21 @@ def parse_args() -> argparse.Namespace:
         default=[MemoryLimit.parse('20%')],
         help=(
             "Memory limit(s) for SMA*. Accepts flat node counts (e.g. 10000) "
-            "or percentages of the instance's total_nodes (e.g. 10%%). Provide "
+            "or percentages (e.g. 10%%). The percentage base is determined by "
+            "--sma-memory-basis (default: actual A* node count). Provide "
             "multiple values to run SMA* once per limit, each as its own "
             "independent algorithm instance."
+        ),
+    )
+    parser.add_argument(
+        "--sma-memory-basis",
+        choices=["ida", "a", "a_approx"],
+        default="a",
+        help=(
+            "What node count percentage-based memory limits resolve against: "
+            "'ida' = IDA* search tree size (total_nodes_ida), "
+            "'a' = actual A* nodes expanded (total_nodes_a, default), "
+            "'a_approx' = sqrt(IDA* count) (total_nodes_a_approx)."
         ),
     )
     parser.add_argument(
@@ -217,7 +229,7 @@ def main() -> None:
 
     instances = build_instances(args)
     print(f"Running {len(algorithms)} algorithms on {len(instances)} instances...")
-    results = run_benchmark(instances, algorithms, limits, dynamic_overrides=dynamic_overrides)
+    results = run_benchmark(instances, algorithms, limits, dynamic_overrides=dynamic_overrides, memory_basis=args.sma_memory_basis)
 
     save_results_csv(results, output_dir / "benchmark_results.csv")
     save_results_json(results, output_dir / "benchmark_results.json")

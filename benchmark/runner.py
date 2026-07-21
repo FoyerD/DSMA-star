@@ -14,14 +14,16 @@ def run_benchmark(
     algorithms: List[SearchAlgorithm],
     limits: SearchLimits,
     dynamic_overrides: Optional[Dict[str, MemoryLimit]] = None,
+    memory_basis: str = "a",
 ) -> List[SearchResult]:
     """Run every algorithm on every instance under identical limits.
 
     ``dynamic_overrides`` maps SearchLimits field names to ``MemoryLimit``
     objects.  For each instance, if any override is a percentage, the
-    instance's ``total_nodes`` is used to resolve it; if an instance lacks
-    ``total_nodes`` and any override is a percentage, a ``ValueError`` is
-    raised.
+    instance's node count is resolved using ``memory_basis``:
+      - ``"ida"``: ``total_nodes_ida`` (IDA* search tree size)
+      - ``"a"``: ``total_nodes_a`` (actual A* nodes expanded)
+      - ``"a_approx"``: ``total_nodes_a_approx`` (sqrt of IDA* count)
     """
     results: List[SearchResult] = []
     total = len(instances) * len(algorithms)
@@ -29,17 +31,25 @@ def run_benchmark(
     for instance in instances:
         problem: SearchProblem = instance.problem
 
-        # Resolve percentage-based limits for this instance.
+        # Select the node-count basis for percentage-based limits.
+        if memory_basis == "ida":
+            basis_nodes = instance.total_nodes_ida
+        elif memory_basis == "a":
+            basis_nodes = instance.total_nodes_a
+        elif memory_basis == "a_approx":
+            basis_nodes = instance.total_nodes_a_approx
+        else:
+            raise ValueError(f"Unknown memory_basis {memory_basis!r} (expected 'ida', 'a', or 'a_approx')")
+
         has_pct = any(ml.is_percent for ml in (dynamic_overrides or {}).values())
-        total_nodes = instance.total_nodes
-        if has_pct and total_nodes is None:
+        if has_pct and basis_nodes is None:
             raise ValueError(
-                f"Percentage-based memory limits require total_nodes on each instance, "
+                f"Percentage-based memory limits require total_nodes_{memory_basis} on each instance, "
                 f"but instance {instance.instance_id!r} has none. "
                 f"Use --puzzle-instance-source=korf or provide flat integer limits."
             )
         resolved_limits = limits.resolve_for_instance(
-            total_nodes=total_nodes or limits.max_nodes,
+            total_nodes=basis_nodes or limits.max_nodes,
             dynamic_overrides=dynamic_overrides,
         )
 
@@ -60,6 +70,9 @@ def run_benchmark(
             result.instance_difficulty = instance.difficulty
             result.instance_source = instance.source
             result.known_optimal_depth = instance.optimal_depth
+            result.total_nodes_ida = instance.total_nodes_ida
+            result.total_nodes_a_approx = instance.total_nodes_a_approx
+            result.total_nodes_a = instance.total_nodes_a
             result.domain_name = getattr(problem, "name", result.domain_name)
             results.append(result)
     return results

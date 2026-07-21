@@ -27,9 +27,13 @@ class NamedInstance:
     # True optimal solution depth, when known in advance (e.g. from korfs100.csv).
     # None means "unknown" -- most generated instances don't have this.
     optimal_depth: Optional[int] = None
-    # Total nodes in the optimal A* search tree (from korfs100.csv).
+    # Total nodes in the IDA* search tree (from korfs100.csv).
     # Used to resolve percentage-based memory limits at runtime.
-    total_nodes: Optional[int] = None
+    total_nodes_ida: Optional[int] = None
+    # Approximate A* node count: int(sqrt(total_nodes_ida)).
+    total_nodes_a_approx: Optional[int] = None
+    # Actual A* node count (nodes_expanded), pre-computed.
+    total_nodes_a: Optional[int] = None
 
 
 def _combined_seed(seed: int, depth: int) -> int:
@@ -99,14 +103,18 @@ class KorfPuzzleInstance:
     instance_id: Union[str, int]
     state: PuzzleState
     optimal_depth: int
-    total_nodes: Optional[int] = None
+    total_nodes_ida: Optional[int] = None
+    total_nodes_a_approx: Optional[int] = None
+    total_nodes_a: Optional[int] = None
 
 
 # Column-name aliases tolerated in korfs100.csv, in priority order.
 _ID_COLUMNS = ("id", "index", "instance_id")
 _STATE_COLUMNS = ("state",)
 _DEPTH_COLUMNS = ("optimal_depth", "depth", "solution_depth", "optimal_solution_length")
-_TOTAL_NODES_COLUMNS = ("total_nodes", "nodes")
+_TOTAL_NODES_IDA_COLUMNS = ("total_nodes_ida", "total_nodes", "nodes")
+_TOTAL_NODES_A_COLUMNS = ("total_nodes_a",)
+_TOTAL_NODES_A_APPROX_COLUMNS = ("total_nodes_a_approx",)
 
 
 def _find_column(fieldnames: Sequence[str], candidates: Sequence[str]) -> Optional[str]:
@@ -180,7 +188,9 @@ def load_korf_instances(csv_path: Path = DEFAULT_KORF_CSV) -> List[KorfPuzzleIns
         id_col = _find_column(reader.fieldnames, _ID_COLUMNS)
         state_col = _find_column(reader.fieldnames, _STATE_COLUMNS)
         depth_col = _find_column(reader.fieldnames, _DEPTH_COLUMNS)
-        total_nodes_col = _find_column(reader.fieldnames, _TOTAL_NODES_COLUMNS)
+        total_nodes_ida_col = _find_column(reader.fieldnames, _TOTAL_NODES_IDA_COLUMNS)
+        total_nodes_a_col = _find_column(reader.fieldnames, _TOTAL_NODES_A_COLUMNS)
+        total_nodes_a_approx_col = _find_column(reader.fieldnames, _TOTAL_NODES_A_APPROX_COLUMNS)
         missing = [
             label for label, col in (("id", id_col), ("state", state_col), ("optimal_depth", depth_col)) if col is None
         ]
@@ -218,21 +228,41 @@ def load_korf_instances(csv_path: Path = DEFAULT_KORF_CSV) -> List[KorfPuzzleIns
                 )
                 continue
 
-            total_nodes: Optional[int] = None
-            if total_nodes_col:
-                raw_total = (raw_row.get(total_nodes_col) or "").strip()
+            total_nodes_ida: Optional[int] = None
+            if total_nodes_ida_col:
+                raw_total = (raw_row.get(total_nodes_ida_col) or "").strip()
                 if raw_total:
                     try:
-                        total_nodes = int(raw_total)
+                        total_nodes_ida = int(raw_total)
                     except ValueError:
                         pass  # non-fatal: leave as None
+
+            total_nodes_a: Optional[int] = None
+            if total_nodes_a_col:
+                raw_total = (raw_row.get(total_nodes_a_col) or "").strip()
+                if raw_total:
+                    try:
+                        total_nodes_a = int(raw_total)
+                    except ValueError:
+                        pass
+
+            total_nodes_a_approx: Optional[int] = None
+            if total_nodes_a_approx_col:
+                raw_total = (raw_row.get(total_nodes_a_approx_col) or "").strip()
+                if raw_total:
+                    try:
+                        total_nodes_a_approx = int(raw_total)
+                    except ValueError:
+                        pass
 
             instances.append(
                 KorfPuzzleInstance(
                     instance_id=instance_id,
                     state=state,
                     optimal_depth=optimal_depth,
-                    total_nodes=total_nodes,
+                    total_nodes_ida=total_nodes_ida,
+                    total_nodes_a=total_nodes_a,
+                    total_nodes_a_approx=total_nodes_a_approx,
                 )
             )
 
@@ -301,7 +331,9 @@ def generate_korf_puzzle_instances(
                 difficulty=f"korf_depth_{korf_instance.optimal_depth}",
                 source="korf100",
                 optimal_depth=korf_instance.optimal_depth,
-                total_nodes=korf_instance.total_nodes,
+                total_nodes_ida=korf_instance.total_nodes_ida,
+                total_nodes_a=korf_instance.total_nodes_a,
+                total_nodes_a_approx=korf_instance.total_nodes_a_approx,
             )
         )
     return instances

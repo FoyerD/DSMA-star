@@ -52,7 +52,7 @@ def test_load_korf_instances_parses_standard_csv(tmp_path: Path):
     )
     instances = load_korf_instances(csv_path)
     assert len(instances) == 2
-    assert instances[0] == KorfPuzzleInstance(instance_id=1, state=GOAL_16, optimal_depth=0, total_nodes=None)
+    assert instances[0] == KorfPuzzleInstance(instance_id=1, state=GOAL_16, optimal_depth=0, total_nodes_ida=None, total_nodes_a=None, total_nodes_a_approx=None)
     assert instances[1].state == DEPTH_2_STATE
     assert instances[1].optimal_depth == 2
 

@@ -131,6 +131,11 @@ class SearchResult:
     stack_exhausted: bool = False
     error_message: Optional[str] = None
 
+    # --- Instance metadata (copied from NamedInstance by runner) ---
+    total_nodes_ida: Optional[int] = None
+    total_nodes_a_approx: Optional[int] = None
+    total_nodes_a: Optional[int] = None
+
     # --- Extra metrics for memory-bounded / two-level algorithms ---
     nodes_collapsed: int = 0
     # See dynamic_sma_collapse.py module docstring for exactly what counts as
