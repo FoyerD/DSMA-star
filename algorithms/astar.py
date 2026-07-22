@@ -46,6 +46,20 @@ class AStar(SearchAlgorithm):
             while open_heap:
                 tracker.check_limits()
 
+                # Periodically rebuild the heap to purge stale entries.
+                live_count = len(best_g) - len(closed)
+                if len(open_heap) > max(1000, 3 * live_count):
+                    seen = set()
+                    fresh = []
+                    for entry in open_heap:
+                        f, neg_g, tie, g, state = entry
+                        key = problem.state_key(state)
+                        if key not in seen and key not in closed and g == best_g.get(key):
+                            seen.add(key)
+                            fresh.append(entry)
+                    open_heap[:] = fresh
+                    heapq.heapify(open_heap)
+
                 f, _neg_g, _tie, g, state = heapq.heappop(open_heap)
                 key = problem.state_key(state)
 
