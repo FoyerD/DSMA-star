@@ -135,6 +135,7 @@ class SearchResult:
     total_nodes_ida: Optional[int] = None
     total_nodes_a_approx: Optional[int] = None
     total_nodes_a: Optional[int] = None
+    total_nodes_a_predicted: bool = False
 
     # --- Extra metrics for memory-bounded / two-level algorithms ---
     nodes_collapsed: int = 0

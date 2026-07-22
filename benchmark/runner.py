@@ -73,6 +73,7 @@ def run_benchmark(
             result.total_nodes_ida = instance.total_nodes_ida
             result.total_nodes_a_approx = instance.total_nodes_a_approx
             result.total_nodes_a = instance.total_nodes_a
+            result.total_nodes_a_predicted = instance.total_nodes_a_predicted
             result.domain_name = getattr(problem, "name", result.domain_name)
             results.append(result)
     return results

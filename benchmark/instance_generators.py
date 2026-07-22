@@ -34,6 +34,8 @@ class NamedInstance:
     total_nodes_a_approx: Optional[int] = None
     # Actual A* node count (nodes_expanded), pre-computed.
     total_nodes_a: Optional[int] = None
+    # Whether total_nodes_a was measured (False) or predicted via regression (True).
+    total_nodes_a_predicted: bool = False
 
 
 def _combined_seed(seed: int, depth: int) -> int:
@@ -106,6 +108,7 @@ class KorfPuzzleInstance:
     total_nodes_ida: Optional[int] = None
     total_nodes_a_approx: Optional[int] = None
     total_nodes_a: Optional[int] = None
+    total_nodes_a_predicted: bool = False
 
 
 # Column-name aliases tolerated in korfs100.csv, in priority order.
@@ -115,6 +118,7 @@ _DEPTH_COLUMNS = ("optimal_depth", "depth", "solution_depth", "optimal_solution_
 _TOTAL_NODES_IDA_COLUMNS = ("total_nodes_ida", "total_nodes", "nodes")
 _TOTAL_NODES_A_COLUMNS = ("total_nodes_a",)
 _TOTAL_NODES_A_APPROX_COLUMNS = ("total_nodes_a_approx",)
+_TOTAL_NODES_A_PREDICTED_COLUMNS = ("total_nodes_a_predicted",)
 
 
 def _find_column(fieldnames: Sequence[str], candidates: Sequence[str]) -> Optional[str]:
@@ -191,6 +195,7 @@ def load_korf_instances(csv_path: Path = DEFAULT_KORF_CSV) -> List[KorfPuzzleIns
         total_nodes_ida_col = _find_column(reader.fieldnames, _TOTAL_NODES_IDA_COLUMNS)
         total_nodes_a_col = _find_column(reader.fieldnames, _TOTAL_NODES_A_COLUMNS)
         total_nodes_a_approx_col = _find_column(reader.fieldnames, _TOTAL_NODES_A_APPROX_COLUMNS)
+        total_nodes_a_predicted_col = _find_column(reader.fieldnames, _TOTAL_NODES_A_PREDICTED_COLUMNS)
         missing = [
             label for label, col in (("id", id_col), ("state", state_col), ("optimal_depth", depth_col)) if col is None
         ]
@@ -255,6 +260,11 @@ def load_korf_instances(csv_path: Path = DEFAULT_KORF_CSV) -> List[KorfPuzzleIns
                     except ValueError:
                         pass
 
+            total_nodes_a_predicted: bool = False
+            if total_nodes_a_predicted_col:
+                raw_val = (raw_row.get(total_nodes_a_predicted_col) or "").strip().lower()
+                total_nodes_a_predicted = raw_val in ("true", "1", "yes")
+
             instances.append(
                 KorfPuzzleInstance(
                     instance_id=instance_id,
@@ -263,6 +273,7 @@ def load_korf_instances(csv_path: Path = DEFAULT_KORF_CSV) -> List[KorfPuzzleIns
                     total_nodes_ida=total_nodes_ida,
                     total_nodes_a=total_nodes_a,
                     total_nodes_a_approx=total_nodes_a_approx,
+                    total_nodes_a_predicted=total_nodes_a_predicted,
                 )
             )
 
@@ -334,6 +345,7 @@ def generate_korf_puzzle_instances(
                 total_nodes_ida=korf_instance.total_nodes_ida,
                 total_nodes_a=korf_instance.total_nodes_a,
                 total_nodes_a_approx=korf_instance.total_nodes_a_approx,
+                total_nodes_a_predicted=korf_instance.total_nodes_a_predicted,
             )
         )
     return instances
