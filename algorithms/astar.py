@@ -28,10 +28,10 @@ class AStar(SearchAlgorithm):
         start_key = problem.state_key(start)
         counter = itertools.count()  # tie-breaker so heap never compares states directly
 
-        # open_heap entries: (f, -g, tie_break, g, state). Ties on f prefer
+        # open_heap entries: (f, -g, tie_break, g, state, key). Ties on f prefer
         # larger g (deeper / more-expanded-looking nodes), as specified.
-        open_heap: List[Tuple[float, float, int, float, Any]] = []
-        heapq.heappush(open_heap, (problem.heuristic(start), -0.0, next(counter), 0.0, start))
+        open_heap: List[Tuple[float, float, int, float, Any, Any]] = []
+        heapq.heappush(open_heap, (problem.heuristic(start), -0.0, next(counter), 0.0, start, start_key))
         tracker.nodes_generated = 1
 
         best_g: Dict[Any, float] = {start_key: 0.0}
@@ -52,16 +52,14 @@ class AStar(SearchAlgorithm):
                     seen = set()
                     fresh = []
                     for entry in open_heap:
-                        f, neg_g, tie, g, state = entry
-                        key = problem.state_key(state)
+                        _f, _neg_g, _tie, g, state, key = entry
                         if key not in seen and key not in closed and g == best_g.get(key):
                             seen.add(key)
                             fresh.append(entry)
                     open_heap[:] = fresh
                     heapq.heapify(open_heap)
 
-                f, _neg_g, _tie, g, state = heapq.heappop(open_heap)
-                key = problem.state_key(state)
+                f, _neg_g, _tie, g, state, key = heapq.heappop(open_heap)
 
                 if g > best_g.get(key, float("inf")):
                     continue  # stale entry, a better path was already found
@@ -84,7 +82,7 @@ class AStar(SearchAlgorithm):
                         best_g[next_key] = new_g
                         came_from[next_key] = (action, state, key)
                         h = problem.heuristic(next_state)
-                        heapq.heappush(open_heap, (new_g + h, -new_g, next(counter), new_g, next_state))
+                        heapq.heappush(open_heap, (new_g + h, -new_g, next(counter), new_g, next_state, next_key))
                         tracker.nodes_generated += 1
 
                 max_frontier_size = max(max_frontier_size, len(open_heap))
