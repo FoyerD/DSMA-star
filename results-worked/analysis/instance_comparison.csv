@@ -1,0 +1,31 @@
+domain_name,instance_id,difficulty_label,instance_source,algorithm_name,success,memory_limit_reached,node_limit_reached,stack_exhausted,runtime_seconds,peak_memory_mb,nodes_expanded,nodes_generated,solution_cost,solution_depth,known_optimal_depth,optimality_gap_vs_astar,optimality_gap_vs_known_optimal,nodes_collapsed,nodes_restored,nodes_spilled_to_disk,nodes_loaded_from_disk,disk_io_time_seconds,disk_peak_nodes,ram_capacity_initial,ram_capacity_final,number_of_ram_increases,number_of_ram_decreases
+n_puzzle,korf55_d41,korf_depth_41,korf100,astar,True,False,False,False,6.886166836600751,277.38671875,144591,280321,41.0,41.0,41.0,0.0,0.0,0,0,0,0,0.0,0,,,0,0
+n_puzzle,korf55_d41,korf_depth_41,korf100,dynamic_sma_collapse,False,False,True,False,3195.990641983226,510.8515625,5032404,5000001,,,41.0,,,4860920,3475884,0,0,0.0,0,185442.0,139081.0,1620,3379
+n_puzzle,korf55_d41,korf_depth_41,korf100,SMA* (memory=20%),False,False,True,False,528.5644502318464,487.26171875,9725723,5000001,,,41.0,,,4814559,0,0,0,0.0,0,185442.0,185442.0,0,0
+n_puzzle,korf55_d41,korf_depth_41,korf100,SMA* (memory=30%),False,False,True,False,528.5111165898852,633.359375,9589495,5000001,,,41.0,,,4721838,0,0,0,0.0,0,278163.0,278163.0,0,0
+n_puzzle,korf55_d41,korf_depth_41,korf100,SMA* (memory=40%),False,False,True,False,519.5034811082296,870.5390625,9452903,5000001,,,41.0,,,4629117,0,0,0,0.0,0,370884.0,370884.0,0,0
+n_puzzle,korf55_d41,korf_depth_41,korf100,ilbfs,True,False,False,False,6.547014814801514,422.87890625,280776,568369,41.0,41.0,41.0,0.0,0.0,0,0,0,0,0.0,0,,,0,0
+n_puzzle,korf12_d45,korf_depth_45,korf100,astar,True,False,False,False,1.3510814988985658,422.2109375,32410,63361,45.0,45.0,45.0,0.0,0.0,0,0,0,0,0.0,0,,,0,0
+n_puzzle,korf12_d45,korf_depth_45,korf100,dynamic_sma_collapse,True,False,False,False,2.3679216019809246,415.2109375,27713,54025,45.0,45.0,45.0,0.0,0.0,0,0,0,0,0.0,0,109268.0,81951.0,0,53
+n_puzzle,korf12_d45,korf_depth_45,korf100,SMA* (memory=20%),False,False,True,False,532.5522880051285,424.0546875,9837755,5000001,,,45.0,,,4890733,0,0,0,0.0,0,109268.0,109268.0,0,0
+n_puzzle,korf12_d45,korf_depth_45,korf100,SMA* (memory=30%),False,False,True,False,532.8871495500207,480.8203125,9757065,5000001,,,45.0,,,4836098,0,0,0,0.0,0,163903.0,163903.0,0,0
+n_puzzle,korf12_d45,korf_depth_45,korf100,SMA* (memory=40%),False,False,True,False,527.574558489956,587.203125,9676341,5000001,,,45.0,,,4781464,0,0,0,0.0,0,218537.0,218537.0,0,0
+n_puzzle,korf12_d45,korf_depth_45,korf100,ilbfs,True,False,False,False,7.304022921714932,434.81640625,307759,622722,45.0,45.0,45.0,0.0,0.0,0,0,0,0,0.0,0,,,0,0
+n_puzzle,korf8_d50,korf_depth_50,korf100,astar,False,False,True,False,114.83242804696783,4528.53125,2646192,5000001,,,50.0,,,0,0,0,0,0.0,0,,,0,0
+n_puzzle,korf8_d50,korf_depth_50,korf100,dynamic_sma_collapse,True,False,False,False,213.20222681807354,6825.26171875,2145029,4031861,50.0,50.0,50.0,,0.0,0,0,0,0,0.0,0,7823787.0,5867840.0,0,4029
+n_puzzle,korf8_d50,korf_depth_50,korf100,SMA* (memory=20%),False,False,True,False,218.0340887727216,7897.984375,2683199,5000002,,,50.0,,,0,0,0,0,0.0,0,7823787.0,7823787.0,0,0
+n_puzzle,korf8_d50,korf_depth_50,korf100,SMA* (memory=30%),False,False,True,False,217.45354838715866,7898.6796875,2683199,5000002,,,50.0,,,0,0,0,0,0.0,0,11735681.0,11735681.0,0,0
+n_puzzle,korf8_d50,korf_depth_50,korf100,SMA* (memory=40%),False,False,True,False,215.35287492489442,7898.74609375,2683199,5000002,,,50.0,,,0,0,0,0,0.0,0,15647574.0,15647574.0,0,0
+n_puzzle,korf8_d50,korf_depth_50,korf100,ilbfs,False,False,True,False,59.00403849268332,3477.8671875,1685277,5000001,,,50.0,,,0,0,0,0,0.0,0,,,0,0
+n_puzzle,korf2_d55,korf_depth_55,korf100,astar,False,False,True,False,114.3662055330351,5050.41796875,2678075,5000003,,,55.0,,,0,0,0,0,0.0,0,,,0,0
+n_puzzle,korf2_d55,korf_depth_55,korf100,dynamic_sma_collapse,False,False,True,False,921.5767031270079,5366.0859375,5944502,5000001,,,55.0,,,2704654,2467108,0,0,0.0,0,3060088.0,4590132.0,902,4095
+n_puzzle,korf2_d55,korf_depth_55,korf100,SMA* (memory=20%),False,False,True,False,354.96536752814427,5656.44140625,5547872,5000001,,,55.0,,,1939913,0,0,0,0.0,0,3060088.0,3060088.0,0,0
+n_puzzle,korf2_d55,korf_depth_55,korf100,SMA* (memory=30%),False,False,True,False,246.80642355279997,7634.73046875,3322343,5000001,,,55.0,,,409869,0,0,0,0.0,0,4590132.0,4590132.0,0,0
+n_puzzle,korf2_d55,korf_depth_55,korf100,SMA* (memory=40%),False,False,True,False,220.36455630883574,7889.26953125,2730292,5000001,,,55.0,,,0,0,0,0,0.0,0,6120176.0,6120176.0,0,0
+n_puzzle,korf2_d55,korf_depth_55,korf100,ilbfs,False,False,True,False,62.41926435800269,3599.22265625,709784,5000001,,,55.0,,,0,0,0,0,0.0,0,,,0,0
+n_puzzle,korf33_d60,korf_depth_60,korf100,astar,False,False,True,False,112.9393093669787,5563.83984375,2698352,5000001,,,60.0,,,0,0,0,0,0.0,0,,,0,0
+n_puzzle,korf33_d60,korf_depth_60,korf100,dynamic_sma_collapse,False,False,True,False,259.17761073913425,8121.86328125,2724112,5000001,,,60.0,,,0,0,0,0,0.0,0,96127573.0,72095680.0,0,4997
+n_puzzle,korf33_d60,korf_depth_60,korf100,SMA* (memory=20%),False,False,True,False,219.30028802901506,7916.7890625,2753429,5000002,,,60.0,,,0,0,0,0,0.0,0,96127573.0,96127573.0,0,0
+n_puzzle,korf33_d60,korf_depth_60,korf100,SMA* (memory=30%),False,False,True,False,215.99626499600708,7916.7890625,2753429,5000002,,,60.0,,,0,0,0,0,0.0,0,144191360.0,144191360.0,0,0
+n_puzzle,korf33_d60,korf_depth_60,korf100,SMA* (memory=40%),False,False,True,False,221.86537278676406,7916.7890625,2753429,5000002,,,60.0,,,0,0,0,0,0.0,0,192255146.0,192255146.0,0,0
+n_puzzle,korf33_d60,korf_depth_60,korf100,ilbfs,False,False,True,False,60.84718506410718,3615.16796875,2053413,5000001,,,60.0,,,0,0,0,0,0.0,0,,,0,0

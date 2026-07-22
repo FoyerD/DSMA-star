@@ -1,0 +1,7 @@
+algorithm_name,total_runs,solved_runs,failed_runs,success_rate,memory_limit_rate,node_limit_rate,stack_exhausted_rate,avg_runtime_s_solved,median_runtime_s_solved,avg_peak_memory_mb,avg_nodes_expanded,avg_nodes_generated,avg_solution_cost_solved,avg_solution_depth_solved,avg_optimality_gap_vs_astar,avg_optimality_gap_vs_known_optimal,total_nodes_collapsed,total_nodes_restored,total_nodes_spilled_to_disk,total_nodes_loaded_from_disk,total_disk_batches_loaded,avg_disk_io_time_seconds,max_disk_peak_nodes,avg_ram_capacity_final,total_ram_increases,total_ram_decreases
+SMA* (memory=20%),5,0,5,0.0,0.0,1.0,0.0,,,4476.50625,6109595.6,5000001.4,,,,,11645205,0,0,0,0,0.0,0,21461231.6,0,0
+SMA* (memory=30%),5,0,5,0.0,0.0,1.0,0.0,,,4912.87578125,5621106.2,5000001.4,,,,,9967805,0,0,0,0,0.0,0,32191847.8,0,0
+SMA* (memory=40%),5,0,5,0.0,0.0,1.0,0.0,,,5032.509375,5459232.8,5000001.4,,,,,9410581,0,0,0,0,0.0,0,42922463.4,0,0
+astar,5,2,3,0.4,0.0,0.6,0.0,4.118624167749658,4.118624167749658,3168.47734375,1639924.0,3068737.4,43.0,43.0,0.0,0.0,0,0,0,0,0,0.0,0,,0,0
+dynamic_sma_collapse,5,2,3,0.4,0.0,0.6,0.0,107.78507421002723,107.78507421002723,4247.8546875,3174752.0,3817177.8,47.5,47.5,0.0,0.0,7565574,5942992,0,0,0,0.0,0,16554936.8,2522,16553
+ilbfs,5,2,3,0.4,0.0,0.6,0.0,6.925518868258223,6.925518868258223,2309.990625,1007401.8,3238218.8,43.0,43.0,0.0,0.0,0,0,0,0,0,0.0,0,,0,0

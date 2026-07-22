@@ -1,0 +1,6 @@
+domain_name,instance_id,fastest_successful_algorithm,lowest_memory_successful_algorithm,fewest_expansions_successful_algorithm,best_solution_cost_algorithm,astar_solved,dynamic_sma_collapse_solved,two_level_dynamic_sma_solved,notes
+n_puzzle,korf12_d45,astar,dynamic_sma_collapse,dynamic_sma_collapse,astar,True,True,False,A* solved fastest
+n_puzzle,korf2_d55,,,,,False,False,False,All algorithms failed; Dynamic collapse had many collapses
+n_puzzle,korf33_d60,,,,,False,False,False,All algorithms failed
+n_puzzle,korf55_d41,ilbfs,astar,astar,astar,True,False,False,Dynamic collapse had many collapses
+n_puzzle,korf8_d50,dynamic_sma_collapse,dynamic_sma_collapse,dynamic_sma_collapse,dynamic_sma_collapse,False,True,False,A* failed; Dynamic SMA*-Collapse solved
