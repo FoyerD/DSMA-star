@@ -115,7 +115,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sma-memory-basis",
         choices=["ida", "a", "a_approx"],
-        default="a",
+        default="ida",
         help=(
             "What node count percentage-based memory limits resolve against: "
             "'ida' = IDA* search tree size (total_nodes_ida), "
