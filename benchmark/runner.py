@@ -65,7 +65,9 @@ def run_benchmark(
                     )
                 )
             )
-            print(f"       → {status} ({result.runtime_seconds:.1f}s, {result.peak_memory_mb:.0f} MB, {result.nodes_expanded:,} expanded, {result.max_frontier_size:,} frontier)")
+            cost_str = f" cost={result.solution_cost:.0f}" if result.success and result.solution_cost is not None else ""
+            opt_str = f" optimal={result.known_optimal_depth}" if result.known_optimal_depth is not None else ""
+            print(f"       → {status.upper()}{cost_str}{opt_str} ({result.runtime_seconds:.1f}s, {result.peak_memory_mb:.0f} MB, {result.nodes_expanded:,} expanded, {result.max_frontier_size:,} frontier)")
             result.instance_id = instance.instance_id
             result.instance_difficulty = instance.difficulty
             result.instance_source = instance.source
