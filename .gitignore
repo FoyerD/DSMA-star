@@ -12,6 +12,7 @@ outs/
 sai.sbatch
 opencode.json
 AGENTS.md
+docs/
 
 # Distribution / packaging
 .Python
