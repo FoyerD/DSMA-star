@@ -22,6 +22,7 @@ from algorithms import AStar, ILBFS, RBFS
 from algorithms.base import SearchAlgorithm, SearchLimits
 from benchmark.analyze import analyze_results
 from benchmark.instance_generators import (
+    DEFAULT_AMIT_CSV,
     DEFAULT_KORF_CSV,
     NamedInstance,
     generate_npuzzle_instances,
@@ -57,12 +58,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--puzzle-size", type=int, default=4, help="N-puzzle board size (4 = 15-puzzle).")
     parser.add_argument(
         "--puzzle-instance-source",
-        choices=["korf", "scramble"],
+        choices=["korf", "scramble", "amit"],
         default="korf" if DEFAULT_KORF_CSV.exists() else "scramble",
         help=(
             "How to generate 15-puzzle instances: 'korf' selects Korf's 100 fixed historical "
             "instances by true optimal solution depth (--optimal-depths, --korf-csv); "
-            "'scramble' generates instances by random-walking from the goal (--scramble-depths). "
+            "'scramble' generates instances by random-walking from the goal (--scramble-depths); "
+            "'amit' loads instances from a CSV with known true optimal depths (--amit-csv). "
             "Defaults to 'korf' when korfs100.csv exists in the working directory, else 'scramble'."
         ),
     )
@@ -71,6 +73,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=str(DEFAULT_KORF_CSV),
         help="Path to the Korf 100 instances CSV, used when --puzzle-instance-source=korf.",
+    )
+    parser.add_argument(
+        "--amit-csv",
+        type=str,
+        default=str(DEFAULT_AMIT_CSV),
+        help="Path to the Amit instances CSV, used when --puzzle-instance-source=amit.",
     )
     parser.add_argument(
         "--optimal-depths",
@@ -118,6 +126,7 @@ def build_instances(args: argparse.Namespace) -> List[NamedInstance]:
                 scramble_depths=args.scramble_depths,
                 optimal_depths=args.optimal_depths,
                 korf_csv=Path(args.korf_csv),
+                amit_csv=Path(args.amit_csv),
             )
         )
 

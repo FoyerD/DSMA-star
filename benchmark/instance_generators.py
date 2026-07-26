@@ -350,6 +350,97 @@ def generate_korf_puzzle_instances(
     return instances
 
 
+DEFAULT_AMIT_CSV = Path("instances/puzzle_amit_depths21_40.csv")
+
+
+@dataclass(frozen=True)
+class AmitPuzzleInstance:
+    """One row of the amit CSV: a 15-puzzle start state with known true
+    optimal solution depth (computed via A*)."""
+
+    instance_id: Union[str, int]
+    state: PuzzleState
+    optimal_depth: int
+    total_nodes_a: Optional[int] = None
+
+
+def load_amit_instances(csv_path: Path = DEFAULT_AMIT_CSV) -> List[AmitPuzzleInstance]:
+    """Parse the amit puzzle instances CSV into AmitPuzzleInstance rows.
+
+    Expected columns: id, state, optimal_depth, total_nodes_a
+    """
+    csv_path = Path(csv_path)
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Amit instances CSV not found: {csv_path}")
+
+    instances: List[AmitPuzzleInstance] = []
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            raise ValueError(f"Amit instances CSV has no header row: {csv_path}")
+
+        for line_number, raw_row in enumerate(reader, start=2):
+            raw_id = (raw_row.get("id") or "").strip()
+            if not raw_id:
+                continue
+            instance_id = _coerce_instance_id(raw_id)
+
+            raw_state = raw_row.get("state") or ""
+            try:
+                state = _parse_puzzle_state(raw_state)
+                _validate_puzzle_state(state, instance_id)
+            except ValueError as exc:
+                print(f"Skipping Amit instance {instance_id!r}: {exc}")
+                continue
+
+            raw_depth = (raw_row.get("optimal_depth") or "").strip()
+            try:
+                optimal_depth = int(raw_depth)
+            except ValueError:
+                continue
+
+            total_nodes_a: Optional[int] = None
+            raw_nodes = (raw_row.get("total_nodes_a") or "").strip()
+            if raw_nodes:
+                try:
+                    total_nodes_a = int(raw_nodes)
+                except ValueError:
+                    pass
+
+            instances.append(
+                AmitPuzzleInstance(
+                    instance_id=instance_id,
+                    state=state,
+                    optimal_depth=optimal_depth,
+                    total_nodes_a=total_nodes_a,
+                )
+            )
+
+    return instances
+
+
+def generate_amit_puzzle_instances(
+    csv_path: Path = DEFAULT_AMIT_CSV,
+) -> List[NamedInstance]:
+    """Build one NamedInstance per row in the amit CSV, using the known
+    true optimal solution depth."""
+    instances = load_amit_instances(csv_path)
+    result: List[NamedInstance] = []
+    for inst in instances:
+        problem = NPuzzleProblem(inst.state, size=4)
+        result.append(
+            NamedInstance(
+                instance_id=f"amit{inst.instance_id}_d{inst.optimal_depth}",
+                problem=problem,
+                difficulty=f"amit_depth_{inst.optimal_depth}",
+                source="amit",
+                optimal_depth=inst.optimal_depth,
+                total_nodes_a=inst.total_nodes_a,
+            )
+        )
+    return result
+
+
 def generate_npuzzle_instances(
     source: str = "scramble",
     *,
@@ -358,10 +449,11 @@ def generate_npuzzle_instances(
     scramble_depths: Sequence[int] = (10, 20, 30, 40, 50),
     optimal_depths: Sequence[int] = (),
     korf_csv: Path = DEFAULT_KORF_CSV,
+    amit_csv: Path = DEFAULT_AMIT_CSV,
 ) -> List[NamedInstance]:
     """Single entry point for 15-puzzle instance generation, selecting between
-    a random scramble (`source="scramble"`) and Korf's 100 fixed historical
-    instances selected by true optimal depth (`source="korf"`).
+    a random scramble (`source="scramble"`), Korf's 100 fixed historical
+    instances (`source="korf"`), or the amit dataset (`source="amit"`).
 
     Korf mode is 15-puzzle only (`size` is ignored -- korfs100.csv states are
     always 4x4) and picks one instance per depth in `optimal_depths`, using
@@ -373,7 +465,9 @@ def generate_npuzzle_instances(
         return generate_korf_puzzle_instances(optimal_depths=optimal_depths, seed=seed, csv_path=korf_csv)
     if source == "scramble":
         return generate_puzzle_instances(seeds=seeds, size=size, scramble_depths=scramble_depths)
-    raise ValueError(f"Unknown puzzle instance source: {source!r} (expected 'korf' or 'scramble')")
+    if source == "amit":
+        return generate_amit_puzzle_instances(csv_path=amit_csv)
+    raise ValueError(f"Unknown puzzle instance source: {source!r} (expected 'korf', 'scramble', or 'amit')")
 
 
 
