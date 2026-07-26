@@ -1,7 +1,7 @@
 import statistics
 from pathlib import Path
 
-from algorithms import AStar, ILBFS
+from algorithms import AStar, ILBFS, RBFS
 from algorithms.base import SearchLimits
 from benchmark.instance_generators import generate_puzzle_instances
 from benchmark.metrics import aggregate_by_domain_and_algorithm
@@ -34,17 +34,25 @@ def test_ilbfs_solves_easy_puzzle():
     assert result.solution_cost == 1
 
 
+def test_rbfs_solves_easy_puzzle():
+    result = RBFS().search(_easy_puzzle(), LIMITS)
+    assert result.success
+    assert result.solution_cost == 1
+
+
 def test_benchmark_runner_produces_results_for_all_algorithms():
     instances = generate_puzzle_instances(seeds=[1, 2], size=3, scramble_depths=[10])
     algorithms = [
         AStar(),
         ILBFS(),
+        RBFS(),
     ]
     results = run_benchmark(instances, algorithms, LIMITS)
     assert len(results) == len(instances) * len(algorithms)
     expected_names = {
         "astar",
         "ilbfs",
+        "rbfs",
     }
     for result in results:
         assert result.algorithm_name in expected_names
@@ -125,6 +133,7 @@ def test_all_algorithms_solve_15_puzzle_scramble_10():
     algorithms = [
         AStar(),
         ILBFS(),
+        RBFS(),
     ]
 
     results = run_benchmark(instances, algorithms, limits)

@@ -1,6 +1,7 @@
 from .astar import AStar
 from .base import MemoryLimit, SearchAlgorithm, SearchLimits, SearchResult
 from .ilbfs import ILBFS
+from .rbfs import RBFS
 
 __all__ = [
     "MemoryLimit",
@@ -9,4 +10,5 @@ __all__ = [
     "SearchResult",
     "AStar",
     "ILBFS",
+    "RBFS",
 ]

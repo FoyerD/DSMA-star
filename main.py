@@ -18,7 +18,7 @@ from typing import List
 
 import psutil
 
-from algorithms import AStar, ILBFS
+from algorithms import AStar, ILBFS, RBFS
 from algorithms.base import SearchAlgorithm, SearchLimits
 from benchmark.analyze import analyze_results
 from benchmark.instance_generators import (
@@ -128,6 +128,7 @@ def build_algorithms(args: argparse.Namespace) -> List[SearchAlgorithm]:
     return [
         AStar(),
         ILBFS(),
+        RBFS(),
     ]
 
 
