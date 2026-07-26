@@ -1,45 +1,50 @@
-"""ILBFS: Iterative Lengthening (cost-bound) Best-First Search.
+"""ILBFS: Iterative Linear Best-First Search.
 
-ASSUMPTION / DOCUMENTED INTERPRETATION:
-"ILBFS" is not a single universally standardized algorithm name. Here we
-implement it as **Iterative Lengthening Search over the f-cost bound**,
-in the same spirit as IDA* (Iterative Deepening A*): a depth-first
-recursive search that prunes any node with f = g + h > bound, and between
-iterations raises `bound` to the smallest f-value that exceeded the
-previous bound. The "BFS" in the name reflects that each bounded pass
-explores in increasing order of f-cost layers (cost-bounded search), not
-that it literally uses a FIFO breadth-first queue.
+A non-recursive, iterative implementation based on the algorithm described
+in docs/ilbfs.md.  ILBFS is functionally identical to Recursive Best-First
+Search (RBFS) -- it visits the same nodes in the same order -- but replaces
+recursive backtracking with an iterative framework using Collapse and
+Restore macros.
 
-This module is intentionally isolated behind the `ILBFS` class so the
-interpretation can be swapped out later (e.g. for a literal breadth-first
-variant) without touching the rest of the codebase.
+Memory complexity: O(b * d) via the Principal Branch Invariant.
 
-STACK EXHAUSTION: because each DFS pass is implemented as Python recursion,
-a deep/hard instance can exhaust the call stack rather than RAM. Instead of
-silently crashing, the recursion limit is raised to `_RECURSION_LIMIT`
-(generous but Python-safe -- well within typical OS thread-stack sizes) for
-the duration of the search and restored afterward; hitting that limit raises
-Python's own `RecursionError`, which we catch and report as
-`result.stack_exhausted = True`. This is the realistic "ran out of stack"
-signal for a recursive algorithm, analogous to how `MemoryLimitError`
-reports a real RSS ceiling for the others.
+Heap tie-breaking: heap entries use ``(F, -order, node)`` so that when F
+values are tied the newest node (child of the current branch) is preferred
+over an older node (sibling).  This prevents the collapse oscillation that
+would otherwise trap the search at depth 1.  See docs/ilbfs.md section 8.
 """
 from __future__ import annotations
 
-import sys
-from typing import Any, List, Optional, Tuple
+import heapq
+import itertools
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 from domains.base import SearchProblem
 
 from ._run_utils import MemoryLimitError, NodeLimitError, RunTracker
 from .base import SearchAlgorithm, SearchLimits, SearchResult
 
-_INF = float("inf")
-_RECURSION_LIMIT = 10_000
+
+@dataclass(slots=True)
+class _Node:
+    state: Any
+    g: float
+    h: float
+    f: float       # g + h (static, never changes)
+    F: float       # stored/backed-up value (== f initially, updated by Collapse/Restore)
+    parent: Optional[_Node]
+    action: Any
+    children: Dict[Any, _Node] = field(default_factory=dict)
+    depth: int = 0
 
 
 class ILBFS(SearchAlgorithm):
-    """Iterative cost-bound (IDA*-style) search. See module docstring for the chosen semantics."""
+    """Iterative Linear Best-First Search.
+
+    Functionally identical to RBFS, non-recursive with O(b*d) memory
+    via Collapse/Restore macros.
+    """
 
     name = "ilbfs"
 
@@ -52,51 +57,126 @@ class ILBFS(SearchAlgorithm):
         tracker = RunTracker.start(limits.max_nodes, limits.max_memory_mb)
 
         start = problem.initial_state
-        bound = problem.heuristic(start)
+        start_h = problem.heuristic(start)
+        state_key = problem.state_key
+
+        root = _Node(
+            state=start,
+            g=0.0,
+            h=start_h,
+            f=start_h,
+            F=start_h,
+            parent=None,
+            action=None,
+            depth=0,
+        )
+
+        order_counter = itertools.count()
+        open_heap: List[Tuple[float, int, _Node]] = []
+        # Negate order so that on F-ties the newest node wins (see section 8).
+        heapq.heappush(open_heap, (root.F, -next(order_counter), root))
+
+        nodes: Dict[Any, _Node] = {state_key(start): root}
+
+        tracker.nodes_generated = 1
         nodes_expanded = 0
-        max_frontier_size = 0  # current recursion-stack depth, the "frontier" of a DFS-style search
+        reexpansions = 0
+        max_frontier_size = 1
         max_depth_reached = 0
+        oldbest: Optional[_Node] = None
 
-        previous_recursion_limit = sys.getrecursionlimit()
-        sys.setrecursionlimit(max(previous_recursion_limit, _RECURSION_LIMIT))
         try:
-            while True:
-                path: List[Tuple[Any, Any]] = []  # (action, state) from root, root excluded
-                visited_on_path = {problem.state_key(start)}
-                counters = {"expanded": 0}
-                outcome = self._bounded_dfs(
-                    problem,
-                    state=start,
-                    g=0.0,
-                    bound=bound,
-                    path=path,
-                    visited_on_path=visited_on_path,
-                    tracker=tracker,
-                    counters=counters,
-                )
-                nodes_expanded += counters["expanded"]
-                max_frontier_size = max(max_frontier_size, outcome.max_depth_this_pass)
-                max_depth_reached = max(max_depth_reached, outcome.max_depth_this_pass)
+            while open_heap:
+                tracker.check_limits()
 
-                if outcome.found:
+                # Step 4: best = extract min(OPEN)
+                _F, _neg_order, best = heapq.heappop(open_heap)
+                best_key = state_key(best.state)
+
+                if best_key not in nodes or nodes[best_key] is not best:
+                    continue
+
+                max_depth_reached = max(max_depth_reached, best.depth)
+
+                # Step 5: if goal(best) then exit
+                if problem.is_goal(best.state):
                     result.success = True
-                    result.solution_cost = outcome.solution_cost
-                    result.solution_actions = [action for action, _state in path]
+                    result.solution_cost = best.g
+                    result.solution_actions = self._reconstruct(best)
                     break
-                if outcome.next_bound == _INF:
-                    break  # search space exhausted, no solution exists
-                bound = outcome.next_bound
+
+                # Steps 7-11: while (oldbest != best.parent) — Collapse loop
+                while oldbest is not None and oldbest is not best.parent:
+                    if oldbest.children:
+                        oldbest.F = min(
+                            child.F for child in oldbest.children.values()
+                        )
+                    else:
+                        oldbest.F = oldbest.f
+                    heapq.heappush(
+                        open_heap,
+                        (oldbest.F, -next(order_counter), oldbest),
+                    )
+                    for ck in list(oldbest.children.keys()):
+                        if ck in nodes and nodes[ck] is oldbest.children[ck]:
+                            del nodes[ck]
+                    oldbest.children.clear()
+                    oldbest = oldbest.parent
+
+                if best.F > best.f:
+                    reexpansions += 1
+
+                # Steps 12-16: foreach child C of best — Expand / Restore
+                nodes_expanded += 1
+                for action, next_state, cost in problem.successors(best.state):
+                    next_key = state_key(next_state)
+                    new_g = best.g + cost
+
+                    existing = nodes.get(next_key)
+                    if existing is not None and existing.g <= new_g:
+                        continue
+
+                    tracker.nodes_generated += 1
+                    next_h = problem.heuristic(next_state)
+                    next_f = new_g + next_h
+
+                    # Step 13: F(C) <- f(C)
+                    next_F = next_f
+
+                    # Steps 14-15: pathmax — Restore propagation rule
+                    if best.F > best.f and best.F > next_F:
+                        next_F = best.F
+
+                    child = _Node(
+                        state=next_state,
+                        g=new_g,
+                        h=next_h,
+                        f=next_f,
+                        F=next_F,
+                        parent=best,
+                        action=action,
+                        depth=best.depth + 1,
+                    )
+
+                    # Step 16: Insert C to OPEN and TREE
+                    best.children[next_key] = child
+                    nodes[next_key] = child
+                    heapq.heappush(
+                        open_heap,
+                        (child.F, -next(order_counter), child),
+                    )
+
+                # Step 17: oldbest <- best
+                oldbest = best
+                max_frontier_size = max(max_frontier_size, len(open_heap))
+
         except NodeLimitError:
             result.node_limit_reached = True
             result.error_message = "max_nodes safety valve exceeded"
         except MemoryLimitError:
             result.memory_limit_reached = True
             result.error_message = "real memory ceiling exceeded"
-        except RecursionError:
-            result.stack_exhausted = True
-            result.error_message = "Python call stack exhausted (RecursionError)"
         finally:
-            sys.setrecursionlimit(previous_recursion_limit)
             result.peak_memory_mb = tracker.stop()
             if result.peak_memory_mb > limits.max_memory_mb:
                 result.memory_limit_reached = True
@@ -106,68 +186,15 @@ class ILBFS(SearchAlgorithm):
         result.nodes_generated = tracker.nodes_generated
         result.max_frontier_size = max_frontier_size
         result.max_depth_reached = max_depth_reached
-        result.reexpansions = 0  # iterative lengthening intentionally re-expands every pass; not tracked separately
+        result.reexpansions = reexpansions
         return result
 
-    def _bounded_dfs(
-        self,
-        problem: SearchProblem,
-        state: Any,
-        g: float,
-        bound: float,
-        path: List[Tuple[Any, Any]],
-        visited_on_path: set,
-        tracker: RunTracker,
-        counters: dict,
-    ) -> "_PassOutcome":
-        tracker.check_limits()
-
-        f = g + problem.heuristic(state)
-        if f > bound:
-            return _PassOutcome(found=False, next_bound=f, max_depth_this_pass=len(path))
-
-        if problem.is_goal(state):
-            return _PassOutcome(found=True, next_bound=_INF, solution_cost=g, max_depth_this_pass=len(path))
-
-        counters["expanded"] += 1
-        smallest_exceeding = _INF
-        deepest = len(path)
-
-        for action, next_state, cost in problem.successors(state):
-            next_key = problem.state_key(next_state)
-            if next_key in visited_on_path:
-                continue  # avoid trivial cycles within the current DFS path
-            tracker.nodes_generated += 1
-
-            path.append((action, next_state))
-            visited_on_path.add(next_key)
-
-            sub_outcome = self._bounded_dfs(
-                problem, next_state, g + cost, bound, path, visited_on_path, tracker, counters
-            )
-
-            if sub_outcome.found:
-                return sub_outcome
-
-            visited_on_path.discard(next_key)
-            path.pop()
-            smallest_exceeding = min(smallest_exceeding, sub_outcome.next_bound)
-            deepest = max(deepest, sub_outcome.max_depth_this_pass)
-
-        return _PassOutcome(found=False, next_bound=smallest_exceeding, max_depth_this_pass=deepest)
-
-
-class _PassOutcome:
-    __slots__ = ("found", "next_bound", "solution_cost", "max_depth_this_pass")
-
-    def __init__(
-        self,
-        found: bool,
-        next_bound: float,
-        max_depth_this_pass: int,
-        solution_cost: Optional[float] = None,
-    ) -> None:
-        self.found = found
-        self.next_bound = next_bound
-        self.solution_cost = solution_cost
-        self.max_depth_this_pass = max_depth_this_pass
+    @staticmethod
+    def _reconstruct(node: _Node) -> List[Any]:
+        actions: List[Any] = []
+        current = node
+        while current.parent is not None:
+            actions.append(current.action)
+            current = current.parent
+        actions.reverse()
+        return actions

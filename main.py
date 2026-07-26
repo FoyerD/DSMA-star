@@ -1,7 +1,7 @@
 """CLI entry point: run the heuristic-search benchmark suite.
 
 Usage:
-    python main.py --domain all --seeds 0 1 2 3 4
+    python main.py --domain puzzle --seeds 0 1 2 3 4
 
 There is no wall-clock timeout: a shared stopwatch structurally favors A*
 (it has no memory-management overhead per node), which defeats the point of
@@ -18,14 +18,13 @@ from typing import List
 
 import psutil
 
-from algorithms import AStar, DynamicSMACollapse, ILBFS, MemoryLimit, SMAStar, TwoLevelDynamicSMA, normalize_memory_limits
+from algorithms import AStar, ILBFS
 from algorithms.base import SearchAlgorithm, SearchLimits
 from benchmark.analyze import analyze_results
 from benchmark.instance_generators import (
     DEFAULT_KORF_CSV,
     NamedInstance,
     generate_npuzzle_instances,
-    generate_sokoban_instances,
 )
 from benchmark.metrics import aggregate_by_domain_and_algorithm
 from benchmark.results import (
@@ -40,9 +39,9 @@ from benchmark.runner import run_benchmark
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Benchmark A*, SMA*, ILBFS, Dynamic SMA*-Collapse, and Two-Level Dynamic SMA*."
+        description="Benchmark A* and ILBFS on the 15-puzzle."
     )
-    parser.add_argument("--domain", choices=["puzzle", "sokoban", "all"], default="all")
+    parser.add_argument("--domain", choices=["puzzle"], default="puzzle")
     parser.add_argument(
         "--seeds",
         type=int,
@@ -100,58 +99,6 @@ def parse_args() -> argparse.Namespace:
         help="Override --max-memory-fraction with an absolute MB ceiling instead.",
     )
     parser.add_argument(
-        "--sma-memory",
-        type=MemoryLimit.parse,
-        nargs="+",
-        default=[MemoryLimit.parse('20%')],
-        help=(
-            "Memory limit(s) for SMA*. Accepts flat node counts (e.g. 10000) "
-            "or percentages (e.g. 10%%). The percentage base is determined by "
-            "--sma-memory-basis (default: actual A* node count). Provide "
-            "multiple values to run SMA* once per limit, each as its own "
-            "independent algorithm instance."
-        ),
-    )
-    parser.add_argument(
-        "--sma-memory-basis",
-        choices=["ida", "a", "a_approx"],
-        default="ida",
-        help=(
-            "What node count percentage-based memory limits resolve against: "
-            "'ida' = IDA* search tree size (total_nodes_ida), "
-            "'a' = actual A* nodes expanded (total_nodes_a, default), "
-            "'a_approx' = sqrt(IDA* count) (total_nodes_a_approx)."
-        ),
-    )
-    parser.add_argument(
-        "--dynamic-initial-ram",
-        type=MemoryLimit.parse,
-        default=MemoryLimit.parse('20%'),
-        help="Dynamic SMA*-Collapse initial RAM node budget (int or percentage, e.g. 10%%).",
-    )
-    parser.add_argument(
-        "--dynamic-min-ram",
-        type=MemoryLimit.parse,
-        default=MemoryLimit.parse('15%'),
-        help="Dynamic SMA*-Collapse minimum RAM node budget (int or percentage).",
-    )
-    parser.add_argument(
-        "--dynamic-max-ram",
-        type=MemoryLimit.parse,
-        default=MemoryLimit.parse('40%'),
-        help="Dynamic SMA*-Collapse maximum RAM node budget (int or percentage).",
-    )
-    parser.add_argument("--two-level-initial-ram", type=int, default=2_000)
-    parser.add_argument("--two-level-min-ram", type=int, default=500)
-    parser.add_argument("--two-level-max-ram", type=int, default=10_000)
-    parser.add_argument("--two-level-total-limit", type=int, default=50_000)
-    parser.add_argument("--epoch-generated-nodes", type=int, default=1_000)
-    parser.add_argument(
-        "--keep-disk",
-        action="store_true",
-        help="Keep Two-Level Dynamic SMA*'s SQLite cache files instead of deleting them after each run.",
-    )
-    parser.add_argument(
         "--analyze-only",
         action="store_true",
         help="Skip running the benchmark; just analyze the existing <output-dir>/benchmark_results.csv.",
@@ -162,8 +109,7 @@ def parse_args() -> argparse.Namespace:
 def build_instances(args: argparse.Namespace) -> List[NamedInstance]:
     instances: List[NamedInstance] = []
 
-
-    if args.domain in ("puzzle", "all"):
+    if args.domain in ("puzzle",):
         instances.extend(
             generate_npuzzle_instances(
                 source=args.puzzle_instance_source,
@@ -175,20 +121,13 @@ def build_instances(args: argparse.Namespace) -> List[NamedInstance]:
             )
         )
 
-    if args.domain in ("sokoban", "all"):
-        instances.extend(generate_sokoban_instances(("easy", "medium")))
-
     return instances
 
 
 def build_algorithms(args: argparse.Namespace) -> List[SearchAlgorithm]:
-    sma_memory_limits = normalize_memory_limits(args.sma_memory)
     return [
         AStar(),
-        DynamicSMACollapse(),
-        *[SMAStar(memory_limit=ml) for ml in sma_memory_limits],
         ILBFS(),
-        # TwoLevelDynamicSMA(keep_disk=args.keep_disk, disk_dir=output_dir / "disk_cache"),
     ]
 
 
@@ -211,25 +150,13 @@ def main() -> None:
     limits = SearchLimits(
         max_memory_mb=max_memory_mb,
         max_nodes=args.max_nodes,
-        max_ram_nodes=args.max_nodes,
-        two_level_initial_ram_nodes=args.two_level_initial_ram,
-        two_level_min_ram_nodes=args.two_level_min_ram,
-        two_level_max_ram_nodes=args.two_level_max_ram,
-        two_level_total_node_limit=args.two_level_total_limit,
-        epoch_generated_nodes=args.epoch_generated_nodes,
     )
-
-    dynamic_overrides = {
-        "dynamic_initial_ram_nodes": args.dynamic_initial_ram,
-        "dynamic_min_ram_nodes": args.dynamic_min_ram,
-        "dynamic_max_ram_nodes": args.dynamic_max_ram,
-    }
 
     algorithms = build_algorithms(args)
 
     instances = build_instances(args)
     print(f"Running {len(algorithms)} algorithms on {len(instances)} instances...")
-    results = run_benchmark(instances, algorithms, limits, dynamic_overrides=dynamic_overrides, memory_basis=args.sma_memory_basis)
+    results = run_benchmark(instances, algorithms, limits)
 
     save_results_csv(results, output_dir / "benchmark_results.csv")
     save_results_json(results, output_dir / "benchmark_results.json")
@@ -247,5 +174,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-    

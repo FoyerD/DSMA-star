@@ -43,14 +43,6 @@ class AggregateMetrics:
     std_solution_depth: Optional[float] = None
     avg_optimality_gap: Optional[float] = None
     std_optimality_gap: Optional[float] = None
-    total_nodes_collapsed: int = 0
-    total_nodes_restored: int = 0
-    total_nodes_spilled_to_disk: int = 0
-    total_nodes_loaded_from_disk: int = 0
-    avg_disk_io_time_seconds: float = 0.0
-    std_disk_io_time_seconds: float = 0.0
-    avg_disk_peak_nodes: float = 0.0
-    std_disk_peak_nodes: float = 0.0
 
 
 def _mean(values: List[float]) -> float:
@@ -105,8 +97,6 @@ def aggregate_by_domain_and_algorithm(
         max_frontier = [r.max_frontier_size for r in group]
         costs_solved = [r.solution_cost for r in successes if r.solution_cost is not None]
         depths_solved = [r.solution_depth for r in successes if r.solution_depth is not None]
-        disk_io = [r.disk_io_time_seconds for r in group]
-        disk_peak = [r.disk_peak_nodes for r in group]
 
         summaries.append(
             AggregateMetrics(
@@ -134,14 +124,6 @@ def aggregate_by_domain_and_algorithm(
                 std_solution_depth=_std_opt(depths_solved),
                 avg_optimality_gap=_mean(gaps) if gaps else None,
                 std_optimality_gap=_std_opt(gaps),
-                total_nodes_collapsed=sum(r.nodes_collapsed for r in group),
-                total_nodes_restored=sum(r.nodes_restored for r in group),
-                total_nodes_spilled_to_disk=sum(r.nodes_spilled_to_disk for r in group),
-                total_nodes_loaded_from_disk=sum(r.nodes_loaded_from_disk for r in group),
-                avg_disk_io_time_seconds=_mean(disk_io),
-                std_disk_io_time_seconds=_std(disk_io),
-                avg_disk_peak_nodes=_mean(disk_peak),
-                std_disk_peak_nodes=_std(disk_peak),
             )
         )
     return summaries

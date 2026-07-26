@@ -1,4 +1,4 @@
-"""Random and handcrafted instance generation for the n-puzzle and Sokoban domains."""
+"""Random and handcrafted instance generation for the n-puzzle domain."""
 from __future__ import annotations
 
 import csv
@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from domains.n_puzzle import NPuzzleProblem, PuzzleState, goal_state
-from domains.sokoban import SokobanProblem
 
 DEFAULT_KORF_CSV = Path("korfs100.csv")
 
@@ -377,85 +376,4 @@ def generate_npuzzle_instances(
     raise ValueError(f"Unknown puzzle instance source: {source!r} (expected 'korf' or 'scramble')")
 
 
-def _parse_sokoban_level(level: str) -> SokobanProblem:
-    """Parse a Sokoban ASCII level.
 
-    Symbols: '#' wall, '.' goal, '$' box, '*' box on goal, '@' player,
-    '+' player on goal, ' ' floor.
-    """
-    rows = level.strip("\n").split("\n")
-    height = len(rows)
-    width = max(len(row) for row in rows)
-    walls, goals, boxes = set(), set(), set()
-    player = None
-    for y, row in enumerate(rows):
-        for x, ch in enumerate(row):
-            if ch == "#":
-                walls.add((x, y))
-            elif ch == ".":
-                goals.add((x, y))
-            elif ch == "$":
-                boxes.add((x, y))
-            elif ch == "*":
-                goals.add((x, y))
-                boxes.add((x, y))
-            elif ch == "@":
-                player = (x, y)
-            elif ch == "+":
-                goals.add((x, y))
-                player = (x, y)
-    if player is None:
-        raise ValueError("Sokoban level has no player start ('@' or '+')")
-    return SokobanProblem(
-        width=width,
-        height=height,
-        walls=frozenset(walls),
-        goals=frozenset(goals),
-        player_start=player,
-        boxes_start=frozenset(boxes),
-    )
-
-
-# Handcrafted levels of increasing difficulty. "hard" is intentionally large
-# (4 boxes) -- it is meant to stress memory-bounded algorithms, not to be
-# guaranteed solvable within tight limits; see the README.
-_SOKOBAN_LEVELS = {
-    "easy": """
-#####
-#.$@#
-#####
-""",
-    "medium": """
-#######
-#.   .#
-# $ $ #
-#  @  #
-#######
-""",
-    "hard": """
-#########
-#.     .#
-# $   $ #
-#       #
-# $   $ #
-#.  @  .#
-#########
-""",
-}
-
-
-def generate_sokoban_instances(levels: Sequence[str] = ("easy", "medium", "hard")) -> List[NamedInstance]:
-    """Build NamedInstance objects for the requested handcrafted Sokoban levels."""
-    instances: List[NamedInstance] = []
-    for difficulty in levels:
-        level_text = _SOKOBAN_LEVELS[difficulty]
-        problem = _parse_sokoban_level(level_text)
-        instances.append(
-            NamedInstance(
-                instance_id=f"sokoban_{difficulty}",
-                problem=problem,
-                difficulty=difficulty,
-                source="sokoban_handcrafted",
-            )
-        )
-    return instances

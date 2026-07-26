@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -23,23 +22,10 @@ Row = Dict[str, Any]
 
 # Columns that are non-negative cumulative counters: a missing/blank value
 # means "this algorithm doesn't produce this metric" which is equivalent to 0
-# for summation/averaging purposes (e.g. A* never spills to disk).
+# for summation/averaging purposes.
 _COUNT_FIELDS = (
     "nodes_expanded",
     "nodes_generated",
-    "nodes_collapsed",
-    "nodes_restored",
-    "nodes_spilled_to_disk",
-    "nodes_loaded_from_disk",
-    "disk_batches_loaded",
-    "disk_peak_nodes",
-    "disk_read_count",
-    "disk_write_count",
-    "number_of_ram_increases",
-    "number_of_ram_decreases",
-    "number_of_total_collapses",
-    "stale_disk_nodes_skipped",
-    "duplicate_nodes_skipped",
     "max_frontier_size",
     "max_depth_reached",
     "reexpansions",
@@ -52,46 +38,25 @@ _OPTIONAL_FLOAT_FIELDS = (
     "solution_depth",
     "runtime_seconds",
     "peak_memory_mb",
-    "disk_io_time_seconds",
-    "ram_capacity_initial",
-    "ram_capacity_final",
-    "ram_capacity_peak",
-    "ram_capacity_min",
     "known_optimal_depth",
 )
 
 _BOOL_FIELDS = ("success", "node_limit_reached", "memory_limit_reached", "stack_exhausted")
 
 ASTAR_NAME = "astar"
-PROPOSED_ALGORITHMS = ("dynamic_sma_collapse", "two_level_dynamic_sma")
-# "sma_star" is a legacy placeholder covering every fixed-memory SMA* run: a
-# benchmark can contain several SMA* instances (one per --sma-memory value),
-# each named "SMA* (memory=<N>)" -- see `_is_sma_star_variant`/`_sma_star_variant_names`.
-BASELINE_ALGORITHMS = ("astar", "sma_star", "ilbfs")
+BASELINE_ALGORITHMS = ("astar", "ilbfs")
 DISPLAY_NAMES = {
     "astar": "A*",
-    "sma_star": "SMA*",  # legacy label for CSVs written before per-memory SMA* names existed
     "ilbfs": "ILBFS",
-    "dynamic_sma_collapse": "Dynamic SMA*-Collapse",
-    "two_level_dynamic_sma": "Two-Level Dynamic SMA*",
 }
 
-# Matches names like "SMA* (memory=10000)" produced by one SMA* instance per
-# --sma-memory value. "sma_star" itself is also accepted for old CSVs written
-# before SMA* runs were split out by memory limit.
-_SMA_STAR_VARIANT_RE = re.compile(r"^SMA\* \(memory=\d+\)$")
+# Reserved for future use (MP-ILBFS will slot in as "proposed").
+PROPOSED_ALGORITHMS: Tuple[str, ...] = ()
+_COMPARISON_PAIRS: List[Tuple[str, str]] = []
 
 
 def _display(name: str) -> str:
     return DISPLAY_NAMES.get(name, name)
-
-
-def _is_sma_star_variant(name: str) -> bool:
-    return name == "sma_star" or bool(_SMA_STAR_VARIANT_RE.match(name))
-
-
-def _sma_star_variant_names(names: Iterable[str]) -> List[str]:
-    return sorted({name for name in names if _is_sma_star_variant(name)})
 
 
 # --------------------------------------------------------------------------
@@ -183,10 +148,7 @@ def add_optimality_gaps(results: List[Row], astar_reference: Optional[Dict[Tuple
 
 def add_known_optimal_gaps(results: List[Row]) -> List[Row]:
     """Annotate each row with `optimality_gap_vs_known_optimal` (solution_cost
-    - known_optimal_depth). Unlike `optimality_gap_vs_astar`, this doesn't
-    require A* to have solved the same instance -- it only needs the true
-    optimal depth to be known in advance, which is the case for Korf
-    instances (`known_optimal_depth`, set from korfs100.csv)."""
+    - known_optimal_depth)."""
     for row in results:
         gap = None
         if row["success"] and row["solution_cost"] is not None and row["known_optimal_depth"] is not None:
@@ -233,9 +195,6 @@ def _aggregate(rows: List[Row]) -> Dict[str, Any]:
     gaps = [r["optimality_gap_vs_astar"] for r in rows if r["optimality_gap_vs_astar"] is not None]
     known_gaps = [r["optimality_gap_vs_known_optimal"] for r in rows if r["optimality_gap_vs_known_optimal"] is not None]
     peak_mem = [r["peak_memory_mb"] for r in rows if r["peak_memory_mb"] is not None]
-    ram_final = [r["ram_capacity_final"] for r in rows if r["ram_capacity_final"] is not None]
-    disk_io = [r["disk_io_time_seconds"] for r in rows if r["disk_io_time_seconds"] is not None]
-    disk_peak = [r["disk_peak_nodes"] for r in rows]
 
     return {
         "total_runs": total,
@@ -254,16 +213,6 @@ def _aggregate(rows: List[Row]) -> Dict[str, Any]:
         "avg_solution_depth_solved": _mean(depths_solved),
         "avg_optimality_gap_vs_astar": _mean(gaps),
         "avg_optimality_gap_vs_known_optimal": _mean(known_gaps),
-        "total_nodes_collapsed": sum(r["nodes_collapsed"] for r in rows),
-        "total_nodes_restored": sum(r["nodes_restored"] for r in rows),
-        "total_nodes_spilled_to_disk": sum(r["nodes_spilled_to_disk"] for r in rows),
-        "total_nodes_loaded_from_disk": sum(r["nodes_loaded_from_disk"] for r in rows),
-        "total_disk_batches_loaded": sum(r["disk_batches_loaded"] for r in rows),
-        "avg_disk_io_time_seconds": _mean(disk_io),
-        "max_disk_peak_nodes": max(disk_peak) if disk_peak else 0,
-        "avg_ram_capacity_final": _mean(ram_final),
-        "total_ram_increases": sum(r["number_of_ram_increases"] for r in rows),
-        "total_ram_decreases": sum(r["number_of_ram_decreases"] for r in rows),
     }
 
 
@@ -298,16 +247,6 @@ _ALGORITHM_SUMMARY_FIELDS = [
     "avg_solution_depth_solved",
     "avg_optimality_gap_vs_astar",
     "avg_optimality_gap_vs_known_optimal",
-    "total_nodes_collapsed",
-    "total_nodes_restored",
-    "total_nodes_spilled_to_disk",
-    "total_nodes_loaded_from_disk",
-    "total_disk_batches_loaded",
-    "avg_disk_io_time_seconds",
-    "max_disk_peak_nodes",
-    "avg_ram_capacity_final",
-    "total_ram_increases",
-    "total_ram_decreases",
 ]
 
 
@@ -347,12 +286,6 @@ _DOMAIN_ALGORITHM_SUMMARY_FIELDS = [
     "avg_solution_depth_solved",
     "avg_optimality_gap_vs_astar",
     "avg_optimality_gap_vs_known_optimal",
-    "total_nodes_collapsed",
-    "total_nodes_restored",
-    "total_nodes_spilled_to_disk",
-    "total_nodes_loaded_from_disk",
-    "avg_disk_io_time_seconds",
-    "max_disk_peak_nodes",
 ]
 
 
@@ -393,16 +326,6 @@ _INSTANCE_COMPARISON_FIELDS = [
     "known_optimal_depth",
     "optimality_gap_vs_astar",
     "optimality_gap_vs_known_optimal",
-    "nodes_collapsed",
-    "nodes_restored",
-    "nodes_spilled_to_disk",
-    "nodes_loaded_from_disk",
-    "disk_io_time_seconds",
-    "disk_peak_nodes",
-    "ram_capacity_initial",
-    "ram_capacity_final",
-    "number_of_ram_increases",
-    "number_of_ram_decreases",
 ]
 
 
@@ -429,16 +352,6 @@ def write_instance_comparison(results: List[Row], out_dir: Path) -> List[Dict[st
                 "known_optimal_depth": row["known_optimal_depth"],
                 "optimality_gap_vs_astar": row["optimality_gap_vs_astar"],
                 "optimality_gap_vs_known_optimal": row["optimality_gap_vs_known_optimal"],
-                "nodes_collapsed": row["nodes_collapsed"],
-                "nodes_restored": row["nodes_restored"],
-                "nodes_spilled_to_disk": row["nodes_spilled_to_disk"],
-                "nodes_loaded_from_disk": row["nodes_loaded_from_disk"],
-                "disk_io_time_seconds": row["disk_io_time_seconds"],
-                "disk_peak_nodes": row["disk_peak_nodes"],
-                "ram_capacity_initial": row["ram_capacity_initial"],
-                "ram_capacity_final": row["ram_capacity_final"],
-                "number_of_ram_increases": row["number_of_ram_increases"],
-                "number_of_ram_decreases": row["number_of_ram_decreases"],
             }
         )
     _write_csv(out_dir / "instance_comparison.csv", _INSTANCE_COMPARISON_FIELDS, out_rows)
@@ -456,15 +369,8 @@ _WINNERS_FIELDS = [
     "lowest_memory_successful_algorithm",
     "fewest_expansions_successful_algorithm",
     "best_solution_cost_algorithm",
-    "astar_solved",
-    "dynamic_sma_collapse_solved",
-    "two_level_dynamic_sma_solved",
     "notes",
 ]
-
-# Heuristic threshold for "many collapses": collapsing more than this fraction
-# of generated nodes is considered heavy memory pressure for the note.
-_HEAVY_COLLAPSE_RATIO = 0.30
 
 
 def _best_by(rows: List[Row], key: str) -> Optional[str]:
@@ -476,32 +382,14 @@ def _best_by(rows: List[Row], key: str) -> Optional[str]:
 
 def _build_notes(rows: List[Row], fastest: Optional[str]) -> str:
     notes: List[str] = []
-    by_algo = {r["algorithm_name"]: r for r in rows}
     solvers = [r["algorithm_name"] for r in rows if r["success"]]
-
-    astar_row = by_algo.get(ASTAR_NAME)
-    astar_solved = bool(astar_row and astar_row["success"])
 
     if not solvers:
         notes.append("All algorithms failed")
-    elif not astar_solved:
-        others = ", ".join(_display(name) for name in solvers if name != ASTAR_NAME)
-        if others:
-            notes.append(f"A* failed; {others} solved")
     elif fastest == ASTAR_NAME:
         notes.append("A* solved fastest")
 
-    two_level_row = by_algo.get("two_level_dynamic_sma")
-    if two_level_row and (two_level_row["nodes_spilled_to_disk"] > 0 or two_level_row["nodes_loaded_from_disk"] > 0):
-        notes.append("Two-Level used disk")
-
-    dynamic_row = by_algo.get("dynamic_sma_collapse")
-    if dynamic_row and dynamic_row["nodes_generated"] > 0:
-        ratio = dynamic_row["nodes_collapsed"] / dynamic_row["nodes_generated"]
-        if ratio > _HEAVY_COLLAPSE_RATIO:
-            notes.append("Dynamic collapse had many collapses")
-
-    stack_exhausted_algos = [name for name, row in by_algo.items() if row["stack_exhausted"]]
+    stack_exhausted_algos = [r["algorithm_name"] for r in rows if r["stack_exhausted"]]
     if stack_exhausted_algos:
         notes.append(f"{', '.join(_display(n) for n in stack_exhausted_algos)} exhausted the call stack")
 
@@ -516,7 +404,6 @@ def write_winners_by_instance(results: List[Row], out_dir: Path) -> List[Dict[st
     out_rows = []
     for (domain_name, instance_id) in sorted(by_instance):
         rows = by_instance[(domain_name, instance_id)]
-        by_algo = {r["algorithm_name"]: r for r in rows}
 
         fastest = _best_by(rows, "runtime_seconds")
         out_rows.append(
@@ -527,9 +414,6 @@ def write_winners_by_instance(results: List[Row], out_dir: Path) -> List[Dict[st
                 "lowest_memory_successful_algorithm": _best_by(rows, "peak_memory_mb"),
                 "fewest_expansions_successful_algorithm": _best_by(rows, "nodes_expanded"),
                 "best_solution_cost_algorithm": _best_by(rows, "solution_cost"),
-                "astar_solved": by_algo.get(ASTAR_NAME, {}).get("success", False),
-                "dynamic_sma_collapse_solved": by_algo.get("dynamic_sma_collapse", {}).get("success", False),
-                "two_level_dynamic_sma_solved": by_algo.get("two_level_dynamic_sma", {}).get("success", False),
                 "notes": _build_notes(rows, fastest),
             }
         )
@@ -561,37 +445,8 @@ _PROPOSED_VS_BASELINES_FIELDS = [
     "proposed_avg_solution_cost",
     "baseline_avg_solution_cost",
     "solution_cost_delta",
-    "proposed_total_collapsed",
-    "proposed_total_restored",
-    "proposed_total_spilled_to_disk",
-    "proposed_total_loaded_from_disk",
     "interpretation",
 ]
-
-_COMPARISON_PAIRS = [
-    ("dynamic_sma_collapse", "astar"),
-    ("dynamic_sma_collapse", "sma_star"),
-    ("dynamic_sma_collapse", "ilbfs"),
-    ("two_level_dynamic_sma", "astar"),
-    ("two_level_dynamic_sma", "sma_star"),
-    ("two_level_dynamic_sma", "ilbfs"),
-    ("two_level_dynamic_sma", "dynamic_sma_collapse"),
-]
-
-
-def _expand_comparison_pairs(
-    pairs: List[Tuple[str, str]], available_algorithm_names: Iterable[str]
-) -> List[Tuple[str, str]]:
-    """Expand the "sma_star" placeholder baseline into one pair per SMA* variant
-    actually present (e.g. "SMA* (memory=10000)", "SMA* (memory=50000)")."""
-    sma_variants = _sma_star_variant_names(available_algorithm_names)
-    expanded: List[Tuple[str, str]] = []
-    for proposed, baseline in pairs:
-        if baseline == "sma_star":
-            expanded.extend((proposed, variant) for variant in sma_variants)
-        else:
-            expanded.append((proposed, baseline))
-    return expanded
 
 
 _EPSILON = 1e-9
@@ -602,10 +457,6 @@ def _interpret(proposed: str, stats_p: Dict[str, Any], stats_b: Dict[str, Any]) 
     runtime_p, runtime_b = stats_p["avg_runtime_s_solved"], stats_b["avg_runtime_s_solved"]
     mem_p, mem_b = stats_p["avg_peak_memory_mb"], stats_b["avg_peak_memory_mb"]
     exp_p, exp_b = stats_p["avg_nodes_expanded"], stats_b["avg_nodes_expanded"]
-
-    if proposed == "two_level_dynamic_sma" and stats_p["total_nodes_spilled_to_disk"] > 0:
-        if runtime_p is not None and runtime_b is not None and runtime_p > runtime_b * 1.5:
-            return "Two-Level used disk heavily; check disk I/O overhead."
 
     if sr_delta is not None and sr_delta > _EPSILON:
         if runtime_p is None or runtime_b is None or runtime_p >= runtime_b:
@@ -643,7 +494,7 @@ def write_proposed_vs_baselines(results: List[Row], out_dir: Path) -> List[Dict[
         for row in group_rows:
             by_algo[row["algorithm_name"]].append(row)
 
-        for proposed, baseline in _expand_comparison_pairs(_COMPARISON_PAIRS, by_algo.keys()):
+        for proposed, baseline in _COMPARISON_PAIRS:
             stats_p = _aggregate(by_algo.get(proposed, []))
             stats_b = _aggregate(by_algo.get(baseline, []))
 
@@ -675,10 +526,6 @@ def write_proposed_vs_baselines(results: List[Row], out_dir: Path) -> List[Dict[
                     "solution_cost_delta": _safe_delta(
                         stats_p["avg_solution_cost_solved"], stats_b["avg_solution_cost_solved"]
                     ),
-                    "proposed_total_collapsed": stats_p["total_nodes_collapsed"],
-                    "proposed_total_restored": stats_p["total_nodes_restored"],
-                    "proposed_total_spilled_to_disk": stats_p["total_nodes_spilled_to_disk"],
-                    "proposed_total_loaded_from_disk": stats_p["total_nodes_loaded_from_disk"],
                     "interpretation": _interpret(proposed, stats_p, stats_b),
                 }
             )
@@ -714,7 +561,7 @@ def _rank_table(algo_summary: List[Dict[str, Any]], key: str, ascending: bool, l
         lines.append("_No data available._")
     else:
         for i, r in enumerate(ranked, start=1):
-            lines.append(f"{i}. **{_display(r['algorithm_name'])}** — {_fmt(r[key])}")
+            lines.append(f"{i}. **{_display(r['algorithm_name'])}** -- {_fmt(r[key])}")
     lines.append("")
     return lines
 
@@ -757,122 +604,14 @@ def write_markdown_summary(
             )
         lines.append("")
 
-    # A* on hard Sokoban
-    sokoban_hard = [r for r in results if r["domain_name"] == "sokoban" and r["instance_difficulty"] == "hard"]
-    astar_hard = [r for r in sokoban_hard if r["algorithm_name"] == ASTAR_NAME]
-    lines.append("## Did A* fail on hard Sokoban instances?")
-    lines.append("")
-    if not astar_hard:
-        lines.append("_No hard Sokoban A* runs found in this dataset._")
-    else:
-        failed = sum(1 for r in astar_hard if not r["success"])
-        lines.append(f"A* failed on {failed}/{len(astar_hard)} hard Sokoban instance run(s) in this dataset.")
-    lines.append("")
-
-    def _stats_for(name: str, rows: List[Row]) -> Dict[str, Any]:
-        return _aggregate([r for r in rows if r["algorithm_name"] == name])
-
-    dyn_stats = _stats_for("dynamic_sma_collapse", results)
-    sma_variant_names = _sma_star_variant_names(r["algorithm_name"] for r in results)
-    lines.append("## Did Dynamic SMA*-Collapse improve over fixed SMA*?")
-    lines.append("")
-    lines.append(
-        f"Dynamic SMA*-Collapse: success {_fmt_pct(dyn_stats['success_rate'])}, "
-        f"avg runtime (solved) {_fmt(dyn_stats['avg_runtime_s_solved'])}s, "
-        f"avg peak memory {_fmt(dyn_stats['avg_peak_memory_mb'])} MB."
-    )
-    if not sma_variant_names:
-        lines.append("_No fixed SMA* runs found in this dataset._")
-    else:
-        for variant in sma_variant_names:
-            variant_stats = _stats_for(variant, results)
-            lines.append(
-                f"Fixed {_display(variant)}: success {_fmt_pct(variant_stats['success_rate'])}, "
-                f"avg runtime (solved) {_fmt(variant_stats['avg_runtime_s_solved'])}s, "
-                f"avg peak memory {_fmt(variant_stats['avg_peak_memory_mb'])} MB.  "
-            )
-    lines.append("")
-
-    lines.append("## Collapse and restore behavior")
-    lines.append("")
-    collapsing_algos = sorted(
-        (r for r in algorithm_summary if r.get("total_nodes_collapsed", 0) > 0),
-        key=lambda r: -r["total_nodes_collapsed"],
-    )
-    if collapsing_algos:
-        lines.append("Algorithms that collapsed nodes (most to least):")
-        for r in collapsing_algos:
-            lines.append(
-                f"- **{_display(r['algorithm_name'])}**: {r['total_nodes_collapsed']} collapsed, "
-                f"{r.get('total_nodes_restored', 0)} restored."
-            )
-    else:
-        lines.append("_No algorithm collapsed any nodes in this dataset._")
-    lines.append("")
-
-    dyn_collapsed = dyn_stats.get("total_nodes_collapsed", 0)
-    dyn_restored = dyn_stats.get("total_nodes_restored", 0)
-    if dyn_collapsed > 0:
-        lines.append(
-            f"Dynamic SMA*-Collapse restored {dyn_restored} node(s) out of {dyn_collapsed} collapsed "
-            f"({dyn_restored / dyn_collapsed:.1%} restore/collapse ratio). \"Restored\" means a node whose "
-            f"entire subtree had been collapsed away was re-expanded because it became the best leaf again "
-            f"-- see the `nodes_restored` docs in `algorithms/dynamic_sma_collapse.py` for exactly what this "
-            f"simplified SMA* counts as a restore."
-        )
-    else:
-        lines.append("Dynamic SMA*-Collapse did not collapse any nodes in this dataset, so nothing could be restored.")
-    lines.append("")
-
-    dyn_rows = [r for r in results if r["algorithm_name"] == "dynamic_sma_collapse"]
-    restored_runtimes = [r["runtime_seconds"] for r in dyn_rows if r["nodes_restored"] > 0 and r["runtime_seconds"] is not None]
-    unrestored_runtimes = [r["runtime_seconds"] for r in dyn_rows if r["nodes_restored"] == 0 and r["runtime_seconds"] is not None]
-    if restored_runtimes and unrestored_runtimes:
-        lines.append(
-            f"Runs with at least one restore: avg runtime {_fmt(_mean(restored_runtimes))}s "
-            f"(n={len(restored_runtimes)}); runs with no restores: avg runtime "
-            f"{_fmt(_mean(unrestored_runtimes))}s (n={len(unrestored_runtimes)})."
-        )
-    else:
-        lines.append("_Not enough runs both with and without restores in this dataset to compare runtime._")
-    lines.append("")
-
-    lines.append(
-        "- **Memory vs. collapse/restore tradeoff**: a smaller RAM bound forces more collapsing (and, later, "
-        "potentially more restoring) as previously-forgotten subtrees become competitive again and must be "
-        "regenerated from scratch -- trading peak memory for extra re-expansion work. Compare the peak-memory "
-        "ranking above against the collapse/restore counts here."
-    )
-    lines.append("")
-
-    two_level_stats = _stats_for("two_level_dynamic_sma", results)
-    lines.append("## Did Two-Level Dynamic SMA* improve over Dynamic SMA*-Collapse?")
-    lines.append("")
-    lines.append(
-        f"Two-Level Dynamic SMA*: success {_fmt_pct(two_level_stats['success_rate'])}, "
-        f"avg runtime (solved) {_fmt(two_level_stats['avg_runtime_s_solved'])}s, "
-        f"avg peak memory {_fmt(two_level_stats['avg_peak_memory_mb'])} MB, "
-        f"nodes spilled to disk: {two_level_stats['total_nodes_spilled_to_disk']}, "
-        f"nodes loaded from disk: {two_level_stats['total_nodes_loaded_from_disk']}.  \n"
-        f"Dynamic SMA*-Collapse: success {_fmt_pct(dyn_stats['success_rate'])}, "
-        f"avg runtime (solved) {_fmt(dyn_stats['avg_runtime_s_solved'])}s, "
-        f"avg peak memory {_fmt(dyn_stats['avg_peak_memory_mb'])} MB."
-    )
-    lines.append("")
-
     lines.append("## Tradeoff discussion")
     lines.append("")
-    lines.append(f"- **Runtime**: see runtime ranking above; Two-Level Dynamic SMA* pays extra overhead for SQLite I/O "
-                  f"(avg disk I/O time across all algorithms: {_fmt(_mean([r['disk_io_time_seconds'] for r in results if r['disk_io_time_seconds'] is not None]))}s).")
-    lines.append("- **RAM usage**: see peak-memory ranking above; fixed and dynamic SMA* variants cap resident nodes, "
-                 "trading memory for potential extra runtime/collapses.")
-    lines.append(f"- **Disk usage**: total nodes spilled to disk across all runs: "
-                 f"{sum(r['nodes_spilled_to_disk'] for r in results)}; "
-                 f"total nodes loaded back: {sum(r['nodes_loaded_from_disk'] for r in results)}.")
-    lines.append(f"- **Collapses**: total nodes collapsed across all runs: {sum(r['nodes_collapsed'] for r in results)}; "
-                 f"total nodes restored: {sum(r['nodes_restored'] for r in results)}.")
-    lines.append(f"- **Solution quality**: average optimality gap vs. A* (where A* solved the same instance): "
-                 f"{_fmt(_mean([r['optimality_gap_vs_astar'] for r in results if r['optimality_gap_vs_astar'] is not None]))}.")
+    lines.append("- **Runtime**: see runtime ranking above.")
+    lines.append("- **RAM usage**: see peak-memory ranking above.")
+    lines.append(
+        f"- **Solution quality**: average optimality gap vs. A* (where A* solved the same instance): "
+        f"{_fmt(_mean([r['optimality_gap_vs_astar'] for r in results if r['optimality_gap_vs_astar'] is not None]))}."
+    )
     lines.append("")
 
     lines.append("## Conclusion")
@@ -881,20 +620,9 @@ def write_markdown_summary(
     strongest_overall = _display(by_success[0]["algorithm_name"]) if by_success else "n/a"
     by_memory = sorted([r for r in algorithm_summary if r["avg_peak_memory_mb"] is not None], key=lambda r: r["avg_peak_memory_mb"])
     strongest_under_pressure = _display(by_memory[0]["algorithm_name"]) if by_memory else "n/a"
-    disk_helped = two_level_stats["total_nodes_loaded_from_disk"] > 0
-    ram_adapted = (dyn_stats["total_ram_increases"] + dyn_stats["total_ram_decreases"]
-                   + two_level_stats["total_ram_increases"] + two_level_stats["total_ram_decreases"]) > 0
 
     lines.append(f"- **Strongest overall (by success rate)**: {strongest_overall}.")
     lines.append(f"- **Strongest under memory pressure (by avg peak memory)**: {strongest_under_pressure}.")
-    lines.append(
-        f"- **Did disk spilling help?** "
-        f"{'Yes — nodes were loaded back from disk and contributed to search.' if disk_helped else 'No evidence of disk loads contributing in this run.'}"
-    )
-    lines.append(
-        f"- **Did adaptive RAM sizing help?** "
-        f"{'RAM capacity was adjusted at least once across the dynamic algorithms.' if ram_adapted else 'No RAM adjustments were triggered in this run (try a longer/harder benchmark to see adaptation).'}"
-    )
     lines.append("")
 
     path = out_dir / "human_readable_summary.md"
