@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from domains.n_puzzle import NPuzzleProblem, PuzzleState, goal_state
 
-DEFAULT_KORF_CSV = Path("korfs100.csv")
+DEFAULT_KORF_CSV = Path("instances/korfs100.csv")
+DEFAULT_AMIT_CSV = Path("instances/puzzle_amit_depths21_40.csv")
 
 
 @dataclass
@@ -350,7 +351,6 @@ def generate_korf_puzzle_instances(
     return instances
 
 
-DEFAULT_AMIT_CSV = Path("instances/puzzle_amit_depths21_40.csv")
 
 
 @dataclass(frozen=True)
