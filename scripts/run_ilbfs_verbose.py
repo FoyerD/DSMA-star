@@ -39,6 +39,7 @@ class _Node:
     action: Any
     children: Dict[Any, _Node] = field(default_factory=dict)
     depth: int = 0
+    collapse_count: int = 0
 
 
 def reconstruct_path(node: _Node) -> List[Any]:
@@ -89,7 +90,7 @@ def run_ilbfs_verbose(problem: SearchProblem, limits: SearchLimits) -> SearchRes
 
     open_heap: List[Tuple[float, int, Any]] = []
     root_key = state_key(start)
-    heapq.heappush(open_heap, (root.F, -root.depth, root_key))
+    heapq.heappush(open_heap, (root.F + root.collapse_count, -root.depth, root_key))
 
     nodes: Dict[Any, _Node] = {state_key(start): root}
 
@@ -109,10 +110,10 @@ def run_ilbfs_verbose(problem: SearchProblem, limits: SearchLimits) -> SearchRes
         while open_heap:
             tracker.check_limits()
 
-            popped_F, _neg_order, popped_key = heapq.heappop(open_heap)
+            popped_F_pen, _neg_depth, popped_key = heapq.heappop(open_heap)
             best = nodes.get(popped_key)
 
-            if best is None or best.F != popped_F:
+            if best is None or best.F + best.collapse_count != popped_F_pen:
                 continue
 
             max_depth_reached = max(max_depth_reached, best.depth)
@@ -147,9 +148,10 @@ def run_ilbfs_verbose(problem: SearchProblem, limits: SearchLimits) -> SearchRes
                     f"| {oldbest_path_str}",
                     flush=True,
                 )
+                oldbest.collapse_count += 1
                 heapq.heappush(
                     open_heap,
-                    (oldbest.F, -oldbest.depth, state_key(oldbest.state)),
+                    (oldbest.F + oldbest.collapse_count, -oldbest.depth, state_key(oldbest.state)),
                 )
                 for ck in list(oldbest.children.keys()):
                     if ck in nodes and nodes[ck] is oldbest.children[ck]:
@@ -159,7 +161,7 @@ def run_ilbfs_verbose(problem: SearchProblem, limits: SearchLimits) -> SearchRes
 
             if collapsed:
                 open_heap = [
-                    (node.F, -node.depth, state_key(node.state))
+                    (node.F + node.collapse_count, -node.depth, state_key(node.state))
                     for node in nodes.values()
                 ]
                 heapq.heapify(open_heap)
@@ -222,7 +224,7 @@ def run_ilbfs_verbose(problem: SearchProblem, limits: SearchLimits) -> SearchRes
                 nodes[next_key] = child
                 heapq.heappush(
                     open_heap,
-                    (child.F, -child.depth, next_key),
+                    (child.F + child.collapse_count, -child.depth, next_key),
                 )
                 n_generated += 1
 

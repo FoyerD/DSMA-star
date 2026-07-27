@@ -8,10 +8,15 @@ Restore macros.
 
 Memory complexity: O(b * d) via the Principal Branch Invariant.
 
-Heap tie-breaking: heap entries use ``(F, -depth, state_key)`` so that when
-F values are tied the deepest node is preferred over shallower ones.  This
-depth-first tie-breaking prevents the collapse oscillation that would
-otherwise trap the search.  See docs/ilbfs.md section 8.
+Heap tie-breaking: heap entries use ``(F + collapse_count, -depth, state_key)``
+so that when F values are tied the deeper node is preferred (matching the
+depth-first expansion pattern that makes d=24 efficient).  Nodes that have
+been collapsed (children deleted) accumulate ``collapse_count``, which
+breaks oscillation on hard instances like d=28 where repeated re-expansion
+of the same deep node would otherwise form an infinite cycle.  This
+combines the strengths of both ``-depth`` (good for d=24) and ``depth``
+(good for d=28) by degrading collapsed nodes until a different branch is
+explored.  See docs/ilbfs.md section 8.
 
 Memory layout: the heap stores state_keys (not _Node references) so that
 collapsed nodes can be garbage collected immediately.  When a node is popped,
@@ -41,6 +46,7 @@ class _Node:
     action: Any
     children: Dict[Any, _Node] = field(default_factory=dict)
     depth: int = 0
+    collapse_count: int = 0  # incremented each time children are deleted
 
 
 class ILBFS(SearchAlgorithm):
@@ -75,12 +81,12 @@ class ILBFS(SearchAlgorithm):
             depth=0,
         )
 
-        open_heap: List[Tuple[float, int, Any]] = []
-        # Negate depth so that on F-ties the deepest node wins (depth-first
-        # tie-breaking prevents collapse oscillation).
-        # Store state_key (not _Node) so collapsed nodes can be GC'd.
+        open_heap: List[Tuple[float, Any]] = []
+        # Tie-breaking: (F + collapse_count, -depth, state_key) — depth-first
+        # with oscillation penalty.  Store state_key (not _Node) so collapsed
+        # nodes can be GC'd.
         root_key = state_key(start)
-        heapq.heappush(open_heap, (root.F, -root.depth, root_key))
+        heapq.heappush(open_heap, (root.F + root.collapse_count, -root.depth, root_key))
 
         nodes: Dict[Any, _Node] = {state_key(start): root}
 
@@ -96,12 +102,12 @@ class ILBFS(SearchAlgorithm):
                 tracker.check_limits()
 
                 # Step 4: best = extract min(OPEN)
-                popped_F, _neg_order, popped_key = heapq.heappop(open_heap)
+                popped_F_pen, _popped_depth, popped_key = heapq.heappop(open_heap)
                 best = nodes.get(popped_key)
 
                 # Stale entry: node was collapsed (deleted from nodes) or its
                 # F value was updated by collapse (doesn't match popped F).
-                if best is None or best.F != popped_F:
+                if best is None or best.F + best.collapse_count != popped_F_pen:
                     continue
 
                 max_depth_reached = max(max_depth_reached, best.depth)
@@ -123,9 +129,10 @@ class ILBFS(SearchAlgorithm):
                         )
                     else:
                         oldbest.F = oldbest.f
+                    oldbest.collapse_count += 1
                     heapq.heappush(
                         open_heap,
-                        (oldbest.F, -oldbest.depth, state_key(oldbest.state)),
+                        (oldbest.F + oldbest.collapse_count, -oldbest.depth, state_key(oldbest.state)),
                     )
                     for ck in list(oldbest.children.keys()):
                         if ck in nodes and nodes[ck] is oldbest.children[ck]:
@@ -140,7 +147,7 @@ class ILBFS(SearchAlgorithm):
                 # nodes dict.  Cost is O(|nodes|) = O(b*d) per collapse.
                 if collapsed:
                     open_heap = [
-                        (node.F, -node.depth, state_key(node.state))
+                        (node.F + node.collapse_count, -node.depth, state_key(node.state))
                         for node in nodes.values()
                     ]
                     heapq.heapify(open_heap)
@@ -185,7 +192,7 @@ class ILBFS(SearchAlgorithm):
                     nodes[next_key] = child
                     heapq.heappush(
                         open_heap,
-                        (child.F, -child.depth, next_key),
+                        (child.F + child.collapse_count, -child.depth, next_key),
                     )
 
                 # Step 17: oldbest <- best
