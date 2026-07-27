@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
         "--optimal-depths",
         type=int,
         nargs="+",
-        default=[21, 31, 40],
+        default=list(range(21, 41)),
         help="True optimal solution depths to select via Korf instances, used when --puzzle-instance-source=korf.",
     )
     parser.add_argument("--scramble-depths", type=int, nargs="+", default=[10, 20, 30, 40, 50])
