@@ -18,7 +18,7 @@ from typing import List
 
 import psutil
 
-from algorithms import AStar, ILBFS, RBFS
+from algorithms import AStar, ILBFS, MPRBFS, RBFS
 from algorithms.base import SearchAlgorithm, SearchLimits
 from benchmark.analyze import analyze_results
 from benchmark.instance_generators import (
@@ -111,6 +111,49 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip running the benchmark; just analyze the existing <output-dir>/benchmark_results.csv.",
     )
+    parser.add_argument(
+        "--algorithms",
+        nargs="+",
+        choices=[
+            "astar",
+            "ilbfs",
+            "rbfs",
+            "mp-rbfs-best_first",
+            "mp-rbfs-round_robin",
+            "mp-rbfs-proportional",
+        ],
+        default=["astar", "ilbfs", "rbfs"],
+        help=(
+            "Which algorithms to run in this benchmark. Include one or more "
+            "of the mp-rbfs-<scheduler> variants to compare Multi-Path RBFS "
+            "scheduling policies against A*/ILBFS/RBFS in a single run."
+        ),
+    )
+    parser.add_argument(
+        "--num-procs",
+        type=int,
+        default=100,
+        help=(
+            "mp-rbfs: number of Phase-1 frontier nodes to build before switching to "
+            "per-proc search (the actual count may be slightly higher -- Phase 1 always "
+            "finishes expanding a node's full sibling set before stopping)."
+        ),
+    )
+    parser.add_argument(
+        "--proportional-seed",
+        type=int,
+        default=0,
+        help="mp-rbfs proportional scheduler: RNG seed for reproducible stochastic scheduling.",
+    )
+    parser.add_argument(
+        "--proportional-weight-power",
+        type=float,
+        default=1.0,
+        help=(
+            "mp-rbfs proportional scheduler: proc weight = 1 / (f + eps) ** power. "
+            "Raise above 1.0 to sharpen preference for low-f procs."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -133,12 +176,23 @@ def build_instances(args: argparse.Namespace) -> List[NamedInstance]:
     return instances
 
 
+_ALGORITHM_FACTORIES = {
+    "astar": lambda args: AStar(),
+    "ilbfs": lambda args: ILBFS(),
+    "rbfs": lambda args: RBFS(),
+    "mp-rbfs-best_first": lambda args: MPRBFS(num_procs=args.num_procs, scheduler="best_first"),
+    "mp-rbfs-round_robin": lambda args: MPRBFS(num_procs=args.num_procs, scheduler="round_robin"),
+    "mp-rbfs-proportional": lambda args: MPRBFS(
+        num_procs=args.num_procs,
+        scheduler="proportional",
+        seed=args.proportional_seed,
+        weight_power=args.proportional_weight_power,
+    ),
+}
+
+
 def build_algorithms(args: argparse.Namespace) -> List[SearchAlgorithm]:
-    return [
-        AStar(),
-        ILBFS(),
-        RBFS(),
-    ]
+    return [_ALGORITHM_FACTORIES[name](args) for name in args.algorithms]
 
 
 def main() -> None:

@@ -88,6 +88,27 @@ class SearchResult:
     total_nodes_a: Optional[int] = None
     total_nodes_a_predicted: bool = False
 
+    # --- mp-rbfs specific (None/0 for every other algorithm) ---
+    requested_num_procs: Optional[int] = None
+    actual_num_procs: Optional[int] = None
+    scheduler_name: Optional[str] = None
+    proc_switches: int = 0
+    phase1_expanded: int = 0
+    phase2_expanded: int = 0
+    active_procs_at_solution: Optional[int] = None
+    procs_used: Optional[int] = None
+    min_proc_expansions: Optional[int] = None
+    max_proc_expansions: Optional[int] = None
+    mean_proc_expansions: Optional[float] = None
+    median_proc_expansions: Optional[float] = None
+    std_proc_expansions: Optional[float] = None
+    winning_proc_id: Optional[int] = None
+    winning_proc_expansions: Optional[int] = None
+    # Compact "count,count,count,..." string, one entry per proc, in proc_id
+    # order -- an optional escape hatch for offline analysis without adding a
+    # column per proc to the normal CSV.
+    proc_expansions_histogram: Optional[str] = None
+
     @property
     def solution_depth(self) -> Optional[int]:
         return len(self.solution_actions) if self.success else None
