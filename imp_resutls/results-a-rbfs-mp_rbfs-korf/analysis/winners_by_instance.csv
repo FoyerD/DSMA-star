@@ -1,0 +1,5 @@
+domain_name,instance_id,fastest_successful_algorithm,lowest_memory_successful_algorithm,fewest_expansions_successful_algorithm,best_solution_cost_algorithm,notes
+n_puzzle,korf12_d45,astar,mp-rbfs-proportional,astar,astar,A* solved fastest
+n_puzzle,korf16_d42,mp-rbfs-round_robin,mp-rbfs-proportional,mp-rbfs-round_robin,astar,
+n_puzzle,korf55_d41,astar,astar,mp-rbfs-proportional,astar,A* solved fastest
+n_puzzle,korf71_d44,astar,astar,astar,astar,A* solved fastest

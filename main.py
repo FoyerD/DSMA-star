@@ -122,7 +122,7 @@ def parse_args() -> argparse.Namespace:
             "mp-rbfs-round_robin",
             "mp-rbfs-proportional",
         ],
-        default=["astar", "ilbfs", "rbfs"],
+        default=["astar", "ilbfs", "rbfs", "mp-rbfs-best_first", "mp-rbfs-round_robin", "mp-rbfs-proportional"],
         help=(
             "Which algorithms to run in this benchmark. Include one or more "
             "of the mp-rbfs-<scheduler> variants to compare Multi-Path RBFS "

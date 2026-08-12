@@ -1,0 +1,21 @@
+domain_name,instance_id,fastest_successful_algorithm,lowest_memory_successful_algorithm,fewest_expansions_successful_algorithm,best_solution_cost_algorithm,notes
+n_puzzle,amit10_d30,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit11_d31,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit12_d32,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit13_d33,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit14_d34,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit15_d35,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit16_d36,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit17_d37,astar,rbfs,rbfs,astar,A* solved fastest
+n_puzzle,amit18_d38,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit19_d39,astar,rbfs,astar,astar,A* solved fastest
+n_puzzle,amit1_d21,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit20_d40,astar,rbfs,astar,astar,A* solved fastest
+n_puzzle,amit2_d22,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit3_d23,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit4_d24,rbfs,ilbfs,rbfs,astar,
+n_puzzle,amit5_d25,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit6_d26,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit7_d27,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit8_d28,astar,astar,astar,astar,A* solved fastest
+n_puzzle,amit9_d29,astar,astar,astar,astar,A* solved fastest

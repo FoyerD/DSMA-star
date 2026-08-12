@@ -1,0 +1,4 @@
+domain_name,algorithm_name,total_runs,solved_runs,success_rate,memory_limit_rate,node_limit_rate,stack_exhausted_rate,avg_runtime_s_solved,median_runtime_s_solved,avg_peak_memory_mb,avg_nodes_expanded,avg_nodes_generated,avg_solution_cost_solved,avg_solution_depth_solved,avg_optimality_gap_vs_astar,avg_optimality_gap_vs_known_optimal
+n_puzzle,astar,20,20,1.0,0.0,0.0,0.0,1.2744681735057384,0.1651309495791793,135.8169921875,28167.45,54198.6,30.5,30.5,0.0,0.0
+n_puzzle,ilbfs,20,12,0.6,0.0,0.4,0.0,20.317302009478833,0.21905645867809653,127.8611328125,1128358.1,2290919.45,26.916666666666668,26.916666666666668,0.0,0.0
+n_puzzle,rbfs,20,20,1.0,0.0,0.0,0.0,2.4899315293878317,0.3435960100032389,148.948046875,42878.55,80960.95,30.5,30.5,0.0,0.0
