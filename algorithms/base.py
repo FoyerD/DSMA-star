@@ -88,13 +88,15 @@ class SearchResult:
     total_nodes_a: Optional[int] = None
     total_nodes_a_predicted: bool = False
 
-    # --- mp-rbfs specific (None/0 for every other algorithm) ---
+    # --- multi-path specific (mp-bfs / mp-rbfs; None/0 for every other algorithm) ---
     requested_num_procs: Optional[int] = None
     actual_num_procs: Optional[int] = None
     scheduler_name: Optional[str] = None
     proc_switches: int = 0
     phase1_expanded: int = 0
     phase2_expanded: int = 0
+    total_collapses: int = 0  # mp-rbfs only: collapse/backup events across all procs
+    max_proc_tree_size: int = 0  # mp-rbfs only: largest live proc TREE observed (O(b*d) check)
     active_procs_at_solution: Optional[int] = None
     procs_used: Optional[int] = None
     min_proc_expansions: Optional[int] = None

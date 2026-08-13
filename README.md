@@ -1,442 +1,88 @@
 # Search Benchmark
 
-A research/experimental Python framework for comparing heuristic search
-algorithms — including two of our own proposed memory-bounded variants —
-across two non-trivial problem domains (15-puzzle and Sokoban-lite).
+A research framework for comparing **memory-bounded heuristic search
+algorithms** on the **15-puzzle**. The original repo also built SMA* variants
+(SMA*, Dynamic SMA*-Collapse, Two-Level Dynamic SMA*) and a Sokoban domain;
+those were removed. The project now contains five clean, well-understood
+algorithms:
 
-## Install
+- **A\*** (`algorithms/astar.py`) — classic graph-search A* with a binary
+  heap. Optimal when `h` is admissible (Manhattan distance is). Keeps every
+  generated node in RAM; fails on hard instances by exhausting memory.
+- **ILBFS** (`algorithms/ilbfs.py`) — Iterative Linear Best-First Search:
+  non-recursive RBFS (Collapse/Restore macros), O(b·d) memory.
+- **RBFS** (`algorithms/rbfs.py`) — Recursive Best-First Search, O(b·d)
+  memory via the recursion stack, ~3x faster than ILBFS.
+- **mp-bfs** (`algorithms/mp_bfs.py`) — Multi-Path Best-First: many
+  independent best-first "procs" (one per initial frontier path) multiplexed
+  by a pluggable scheduler. Suboptimal solutions are possible.
+- **mp-rbfs** (`algorithms/mp_rbfs.py`) — Multi-Path RBFS: the same proc
+  architecture, but each proc runs a real iterative RBFS (Collapse/Restore)
+  with a shared global tree. See `docs/mp_bfs.md` and `docs/mp_rbfs.md`.
 
-Requires Python 3.9+. The benchmark uses the standard library plus `psutil`
-(for the real-memory ceiling, see **No timeout** below); `pytest` is needed
-only to run the test suite.
+> For the full project history, every issue found and solved, and the CLI
+> reference, read **`AGENTS.md`**. It is the authoritative doc. The algorithm
+> details live in `docs/ilbfs.md`, `docs/mp_bfs.md`, and `docs/mp_rbfs.md`.
 
-```bash
-pip install -r requirements.txt
-```
-
-## Run
-
-```bash
-python main.py --domain all --seeds 0 1 2 3 4
-```
-
-This runs all five algorithms on both domains. For the n-puzzle domain, one
-instance is generated per `(scramble depth, seed)` pair, so every algorithm is
-evaluated across all of `--seeds` at each scramble depth. It prints summary
-tables grouped by domain/difficulty/algorithm — with the seed-varying metrics
-(runtime, memory, nodes expanded/generated) shown as `mean(±std)`, using the
-sample standard deviation across seeds — writes detailed per-run results to
-`results/benchmark_results.csv`/`.json`, writes the aggregated mean/std
-summary to `results/benchmark_summary.csv`/`.json`, and then automatically
-analyzes the per-run results into `results/analysis/` (see **Results
-analysis** below).
-
-### No timeout
-
-There is intentionally no wall-clock timeout. A shared stopwatch structurally
-favors A* — it has no memory-management overhead per node, so it's always
-fastest by that measure — which defeats the point of comparing
-memory-bounded algorithms. Instead, every run goes until it **solves the
-problem** or hits a **real resource ceiling**:
-
-- **Memory**: actual process RSS (sampled periodically via `psutil`, not
-  `tracemalloc`-only) crossing `--max-memory-fraction` of this machine's
-  total RAM (default `0.8`), or an absolute `--max-memory-mb` override.
-- **Call stack**: ILBFS's recursive DFS raising a real Python
-  `RecursionError` (recursion limit is raised generously for the duration of
-  the search, then restored).
-- **`--max-nodes`** (default `5,000,000`) remains only as a generous safety
-  valve against a genuine infinite-loop bug — it is not meant to be the
-  binding constraint in normal use.
-
-Because of this, **a "hard" run can legitimately take a long time** —
-there's nothing artificially cutting it short anymore. On a shared or
-resource-limited machine, lower `--max-memory-fraction` (or set an absolute
-`--max-memory-mb`) so a hard instance fails fast via the memory ceiling
-instead of consuming the whole machine's RAM.
-
-More examples:
+## Quick start
 
 ```bash
-# 15-puzzle only, a handful of scramble depths, three seeds per depth, for a quick look
-python main.py --domain puzzle --seeds 0 1 2 --puzzle-size 4 --scramble-depths 10 20 30
-
-# Sokoban only (always runs the 3 handcrafted easy/medium/hard levels);
-# cap real memory at 2 GB so a run that can't be solved fails fast
-python main.py --domain sokoban --max-memory-mb 2048
-
-# Stress the memory-bounded algorithms with a small RAM budget
-python main.py --domain puzzle --sma-memory 500 --dynamic-initial-ram 300 --dynamic-min-ram 100 --two-level-initial-ram 300 --two-level-total-limit 5000
-
-# Keep Two-Level Dynamic SMA*'s SQLite cache files for inspection
-python main.py --domain sokoban --keep-disk
-
-# Re-analyze an existing results/benchmark_results.csv without re-running the benchmark
-python main.py --analyze-only --output-dir results
-
-# Or run the analysis module directly against any CSV
-python -m benchmark.analyze --input results/benchmark_results.csv --output-dir results/analysis
-
-# 15-puzzle with Korf's 100 fixed instances, selected by true optimal solution depth
-# (see "Using Korf's 100 15-puzzle instances" below)
-python main.py --domain puzzle --puzzle-instance-source korf --optimal-depths 40 45 50 55 60
+conda activate sai
+pip install -r requirements.txt        # psutil, pytest
+python main.py --domain puzzle --seeds 0
+python -m pytest tests/ -q
 ```
 
-### CLI arguments
+> `conda run` buffers stdout — use `python -u` and the direct python path
+> (`/home/foyer/miniconda3/envs/sai/bin/python`) when you need live output.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--domain` | `all` | `puzzle`, `sokoban`, or `all` |
-| `--seeds` | `0` | List of RNG seeds; one n-puzzle instance is generated per (scramble depth, seed) pair, and results are aggregated as mean/std across seeds (Sokoban always runs its 3 fixed handcrafted levels, seed-independent) |
-| `--output-dir` | `results` | Where CSV/JSON results (and the disk-cache dir) are written |
-| `--puzzle-size` | `4` | N-puzzle board size (`4` = 15-puzzle, `3` = 8-puzzle) |
-| `--puzzle-instance-source` | `korf` if `korfs100.csv` exists, else `scramble` | `korf` selects fixed instances from `--korf-csv` by true optimal depth (`--optimal-depths`); `scramble` random-walks from the goal (`--scramble-depths`) -- see **Using Korf's 100 15-puzzle instances** below |
-| `--korf-csv` | `korfs100.csv` | Path to the Korf 100 instances CSV, used when `--puzzle-instance-source=korf` |
-| `--optimal-depths` | `40 45 50 55 60` | True optimal solution depths to select via Korf instances, used when `--puzzle-instance-source=korf` |
-| `--scramble-depths` | `10 20 30 40 50` | Scramble depths; every depth is run with every seed in `--seeds`; used when `--puzzle-instance-source=scramble` |
-| `--max-nodes` | `5000000` | Generous infinite-loop safety valve; not the binding constraint in normal use |
-| `--max-memory-fraction` | `0.8` | Real memory ceiling as a fraction of this machine's total RAM (checked against actual process RSS) |
-| `--max-memory-mb` | none | Override `--max-memory-fraction` with an absolute MB ceiling instead |
-| `--sma-memory` | `5000` | Max nodes SMA* may keep resident at once |
-| `--dynamic-initial-ram` / `--dynamic-min-ram` / `--dynamic-max-ram` | `2000` / `500` / `10000` | Dynamic SMA*-Collapse's adaptive RAM bound and its floor/ceiling |
-| `--two-level-initial-ram` / `--two-level-min-ram` / `--two-level-max-ram` | `2000` / `500` / `10000` | Two-Level Dynamic SMA*'s adaptive RAM bound and its floor/ceiling |
-| `--two-level-total-limit` | `50000` | Two-Level Dynamic SMA*'s total (RAM + disk) frontier bound before it must collapse |
-| `--epoch-generated-nodes` | `1000` | How many generated nodes make up one adaptation "epoch" for both dynamic algorithms |
-| `--keep-disk` | off | Keep Two-Level Dynamic SMA*'s SQLite cache file instead of deleting it after each run |
-| `--analyze-only` | off | Skip running the benchmark; just (re-)analyze `<output-dir>/benchmark_results.csv` |
+## Instance sources — scramble depth is NOT optimal depth
 
-## Algorithms implemented
-
-- **A\*** (`algorithms/astar.py`) — standard graph-search A* using a binary
-  heap with priority `(f, -g, counter)` (ties on `f` prefer deeper nodes) and
-  a `best_g` dictionary for duplicate detection. Optimal whenever the
-  heuristic is admissible (both bundled heuristics are, modulo the Sokoban
-  caveat noted below).
-- **SMA\*** (`algorithms/sma_star.py`) — simplified memory-bounded A* with a
-  *fixed* memory bound (`--sma-memory`). When memory is exceeded it collapses
-  the worst frontier leaf and backs up its f-value to the parent. See
-  **Limitations** below and the module docstring for the exact
-  simplifications.
-- **ILBFS** (`algorithms/ilbfs.py`) — "Iterative Lengthening Best-First
-  Search", implemented here as iterative cost-bound search in the spirit of
-  IDA*: each pass does a depth-first search pruning nodes with `f > bound`,
-  then raises `bound` to the smallest f-value that exceeded the previous
-  bound. ILBFS has no single standard definition, so this interpretation is
-  documented explicitly in the module docstring and isolated behind the
-  `ILBFS` class so it can be swapped out later.
-- **Dynamic SMA\*-Collapse** (`algorithms/dynamic_sma_collapse.py`) — *our
-  first proposed algorithm*. SMA* with a RAM bound (`B_ram`) that adapts
-  every `--epoch-generated-nodes` generated nodes based on how often nodes
-  had to be collapsed (`collapse_ratio`): heavy collapsing (`> 50%`) doubles
-  `B_ram` (up to `--dynamic-max-ram`); light collapsing (`< 10%`) halves it
-  (down to `--dynamic-min-ram`) and immediately re-enforces the smaller
-  bound. See **What Dynamic SMA*-Collapse does** below.
-- **Two-Level Dynamic SMA\*** (`algorithms/two_level_dynamic_sma.py`) — *our
-  second proposed algorithm*. Adds a SQLite-backed disk frontier between the
-  RAM frontier and true collapse, so demoting a node out of RAM (a "spill")
-  no longer means forgetting it. See **What Two-Level Dynamic SMA\* does**
-  and **Spill vs. collapse** below.
-
-## Domains implemented
-
-- **15-puzzle** (`domains/n_puzzle.py`) — generalized N-puzzle; the benchmark
-  defaults to the 4x4 (15-puzzle) board, but `size=3` gives the classic
-  8-puzzle. State is a flat tuple (`0` = blank), actions slide the blank
-  up/down/left/right at cost 1, heuristic is the sum of per-tile Manhattan
-  distances (no linear-conflict refinement — see **Limitations**).
-- **Sokoban-lite** (`domains/sokoban.py`) — state is `(player_position,
-  boxes)`; actions move the player, pushing at most one box per step at cost
-  1. Heuristic is the sum of each box's distance to its *nearest* goal, plus
-  simple corner-deadlock pruning (a non-goal cell boxed in by two
-  perpendicular walls is treated as unreachable). Three handcrafted levels
-  (`easy`, `medium`, `hard`) are bundled — see **Instance generation**.
-
-Both domains implement the shared `SearchProblem` interface
-(`domains/base.py`: `initial_state`, `is_goal`, `successors`, `heuristic`,
-`state_key`), and every algorithm depends only on that interface, never on a
-concrete domain.
-
-### Instance generation
-
-- **15-puzzle**: instances can come from either of two sources
-  (`--puzzle-instance-source`):
-  - **`korf`** (the default when `korfs100.csv` is present) — fixed
-    historical instances selected by their *true* optimal solution depth.
-    See **Using Korf's 100 15-puzzle instances** below.
-  - **`scramble`** — solvable instances generated by random-walking away
-    from the goal state for a configured scramble depth (`--scramble-depths`,
-    default `10 20 30 40 50`), labeled by depth for reporting. Deeper
-    scrambles are *not* guaranteed hard or easy in wall-clock terms —
-    random-walk depth doesn't always correlate tightly with true solution
-    length, since moves can cancel out — but as a rule of thumb, expect A*
-    to comfortably solve shallow/moderate depths quickly; deeper instances
-    are increasingly likely to exhaust real memory (especially A* itself,
-    since it keeps every generated node) or the `--max-nodes` safety valve,
-    especially for the slower memory-bounded algorithms.
-- **Sokoban**: three fixed handcrafted levels (parsed from ASCII art in
-  `benchmark/instance_generators.py`) of increasing size/box-count: `easy`
-  (one box, one push, trivially solved by everyone), `medium` (two boxes, a
-  short multi-step solution, comfortably solved by everyone), and `hard`
-  (four boxes in a larger room). In local testing, `hard` exhausted real
-  memory or the node-count safety valve for *every* algorithm under a tight
-  `--max-memory-mb` — exactly the scenario meant to showcase differing memory
-  behavior under sustained pressure. **We do not guarantee any algorithm
-  solves it** — the benchmark is designed to report
-  success/failure/memory-limit/node-limit honestly either way, and that
-  contrast (who fails how) is itself the interesting result.
-
-## Using Korf's 100 15-puzzle instances
-
-Random scramble depth is **not** the same thing as true optimal solution
-depth — moves taken during a random walk can cancel each other out, so two
-instances scrambled to the same depth can have very different true solving
-difficulty. That mismatch is a source of high variance when comparing
-algorithms across seeds at a nominal "depth".
-
-Korf's 100 15-puzzle instances are a standard benchmark set where the *true*
-optimal solution depth of every instance is already known (computed once,
-historically, by exhaustive search), so selecting instances by
-`optimal_depth` gives a fair, low-variance point of comparison instead.
-
-**Setup**: put `korfs100.csv` in the project root (already the case in this
-repo), or pass `--korf-csv /path/to/korfs100.csv`. The CSV needs an `id`-like
-column, a `state`-like column (16 space/comma-separated numbers, or a
-bracketed list, row-major, `0` = blank), and an `optimal_depth`-like column —
-see `load_korf_instances` in `benchmark/instance_generators.py` for the exact
-accepted column-name aliases.
-
-**Run**:
+- **`scramble`** — random walks from the goal. Scramble depth is *not* the
+  true optimal solution length (moves cancel out).
+- **`korf`** — `instances/korfs100.csv`: 100 fixed historical instances with
+  true optimal depths and IDA*/A* node counts.
+- **`amit`** — `instances/puzzle_amit_depths21_40.csv`: 20 instances at true
+  optimal depths 21–40, A*-verified by `scripts/generate_depths21_40.py`.
 
 ```bash
-python main.py --domain puzzle --puzzle-instance-source korf --optimal-depths 40 45 50 55 60
+# Korf instances by optimal depth
+python main.py --domain puzzle --puzzle-instance-source korf --optimal-depths 40 45 50
+
+# Amit instances (true depths 21-40)
+python main.py --domain puzzle --puzzle-instance-source amit
+
+# Multi-path variants (choose a scheduler: best_first, round_robin, etc.)
+python main.py --domain puzzle --puzzle-instance-source amit --algorithms mp-rbfs-best_first
+python main.py --domain puzzle --puzzle-instance-source amit --algorithms mp-bfs-best_first
 ```
 
-This selects one Korf instance per requested depth (`get_instance_by_optimal_depth`
-in `benchmark/instance_generators.py`): if a requested depth has no exact
-match in the CSV, it deterministically falls back to the closest available
-depth and prints a warning (e.g. `No Korf instance with optimal_depth=45;
-using closest depth 44 instead.`). Selection is deterministic given
-`--seeds`' first value (used as the tie-break seed when a depth has multiple
-matching instances) — the same command always selects the same instances.
+## Submission benchmark
 
-Each resulting instance is labeled `difficulty="korf_depth_<N>"`, tagged
-`instance_source="korf100"` in the results CSV, and carries its true
-`known_optimal_depth` through to `optimality_gap_vs_known_optimal` in
-`instance_comparison.csv` — a gap computed directly against the known-correct
-answer, not just against whichever algorithm happened to be used as the A*
-reference (see **Results analysis** below).
+The full submission run needs more RAM than this repo's default machine, so
+both runs are scripted in `run.sh` at the repo root (run on a bigger box with
+`conda activate sai`):
 
-## Metrics collected
+```bash
+bash run.sh    # amit 21-40 -> results_amit/  +  korf 41/47/55 -> results_korf/
+```
 
-Per run (`algorithms/base.py: SearchResult`): `success`, `solution_cost`,
-`solution_actions` (and derived `solution_depth`), `runtime_seconds`,
-`peak_memory_mb` (real process RSS, sampled via `psutil`, vs. the `tracemalloc`
-Python-object peak — whichever is larger), `nodes_expanded`, `nodes_generated`,
-`max_frontier_size`, `max_depth_reached`, `reexpansions`, `node_limit_reached`,
-`memory_limit_reached`, `stack_exhausted` (ILBFS hit a real `RecursionError`),
-`error_message`, `instance_source` (`"scramble"`, `"korf100"`,
-`"sokoban_handcrafted"`, ...) and `known_optimal_depth` (the true optimal
-solution depth, when known in advance — set for Korf instances, `None`
-otherwise), plus algorithm-specific extras: `nodes_collapsed`,
-`nodes_restored` (Dynamic SMA*-Collapse only — see **What Dynamic
-SMA*-Collapse does** below for exactly what counts as a "restore"),
-`nodes_spilled_to_disk`, `nodes_loaded_from_disk`, `disk_batches_loaded`,
-`disk_peak_nodes`, `disk_read_count`, `disk_write_count`,
-`disk_io_time_seconds`, `ram_capacity_initial/final/peak/min`,
-`number_of_ram_increases/decreases`, `number_of_total_collapses`,
-`stale_disk_nodes_skipped`, `duplicate_nodes_skipped`.
+Each `--output-dir` gets a raw, lossless `benchmark_results.csv/.json`, a
+mean/std `benchmark_summary.csv/.json`, and an `analysis/` folder with curated
+reports: `algorithm_summary.csv`, `by_difficulty_summary.csv`,
+`proposed_algorithms_vs_baselines.csv`, `winners_by_instance.csv`,
+`summary.json`, and `human_readable_summary.md`. On the hard end (amit d>=29,
+korf d55) A* hits the memory ceiling and RBFS-family algorithms the node limit
+— that is the expected data point, not a bug.
 
-Aggregated per (domain, difficulty, algorithm) (`benchmark/metrics.py`):
-success rate, node-limit/memory-limit/stack-exhausted rates, average runtime
-*on solved instances*, average peak memory, average nodes expanded/generated,
-average max frontier size, average solution cost/depth, **optimality gap**
-(`(cost - A*_cost) / A*_cost`, averaged where A* also succeeded on the same
-instance), and totals for collapsed/restored/spilled/loaded nodes plus average
-disk I/O time and peak disk size.
+## Design notes
 
-## Results analysis
-
-`benchmark/analyze.py` post-processes `results/benchmark_results.csv` (the
-detailed per-run CSV) into a set of higher-level summary/comparison files in
-`results/analysis/`. It runs automatically at the end of `python main.py`,
-or standalone via `--analyze-only` or `python -m benchmark.analyze --input
-... --output-dir ...` (see **Run** above for examples). Output files:
-
-- **`algorithm_summary.csv`** — one row per algorithm, aggregated across all
-  domains/instances (success/memory-limit/node-limit/stack-exhausted rates,
-  runtime and memory stats, node counts, optimality gaps
-  (`avg_optimality_gap_vs_astar` and `avg_optimality_gap_vs_known_optimal`),
-  and totals for collapsed/restored/spilled/loaded nodes and RAM-capacity
-  adjustments).
-- **`domain_algorithm_summary.csv`** — the same kind of aggregation, but
-  broken out per (domain, algorithm).
-- **`instance_comparison.csv`** — one row per (instance, algorithm): a
-  flattened, analysis-friendly view of the raw results plus the computed
-  `optimality_gap_vs_astar` and, when `known_optimal_depth` is available (e.g.
-  Korf instances), `optimality_gap_vs_known_optimal`.
-- **`winners_by_instance.csv`** — one row per instance, naming the fastest /
-  lowest-memory / fewest-expansions / best-solution-cost algorithm (among
-  those that succeeded on that instance), whether A*, Dynamic SMA*-Collapse,
-  and Two-Level Dynamic SMA* each solved it, and short machine-readable
-  `notes` (e.g. `"A* failed; Two-Level Dynamic SMA* solved"`, `"All
-  algorithms failed"`, `"Two-Level used disk"`, `"Dynamic collapse had many
-  collapses"` — the latter triggers when more than 30% of a run's generated
-  nodes were collapsed, see `_HEAVY_COLLAPSE_RATIO` in `analyze.py`).
-- **`proposed_algorithms_vs_baselines.csv`** — head-to-head comparisons of
-  our two proposed algorithms against A*/SMA*/ILBFS (and against each
-  other), computed once across all domains and once per domain, with
-  success-rate/runtime/memory/node-expansion deltas and ratios,
-  `proposed_total_collapsed`/`proposed_total_restored`, plus a rule-based
-  `interpretation` sentence (see `_interpret()` in `analyze.py` for the exact
-  decision rules).
-- **`human_readable_summary.md`** — a Markdown report: rankings by success
-  rate / runtime / memory, per-domain observations, whether A* failed on
-  hard Sokoban, whether each proposed algorithm improved on its predecessor, a
-  **"Collapse and restore behavior"** section (which algorithms collapsed the
-  most nodes, how many Dynamic SMA*-Collapse restored relative to how many it
-  collapsed, and a runtime comparison between runs that needed at least one
-  restore and runs that didn't), a tradeoff discussion
-  (runtime/RAM/disk/collapses-and-restores/solution quality), and a short
-  conclusion section.
-
-All parsing from the CSV is defensive (blank/missing fields never crash the
-analysis — see `_to_bool`/`_to_optional_float`/`_to_count` in `analyze.py`),
-ratios use safe division (a zero or missing denominator yields an empty
-cell, never a `ZeroDivisionError`), and every CSV is written with a header
-row even when there are zero matching runs (e.g. an algorithm that wasn't
-run, or an empty input file).
-
-## What Dynamic SMA*-Collapse does
-
-It's SMA* (fixed-bound collapse-on-overflow) with one change: the memory
-bound `B_ram` is not fixed. Every `epoch_generated_nodes` generated nodes, it
-looks at `collapse_ratio = collapsed_this_epoch / generated_this_epoch`:
-
-- `collapse_ratio > 0.50` → memory pressure is high relative to the problem
-  → double `B_ram` (capped at `dynamic_max_ram_nodes`).
-- `collapse_ratio < 0.10` → there's slack → halve `B_ram` (floored at
-  `dynamic_min_ram_nodes`) and immediately collapse down to the new, smaller
-  bound if needed.
-
-This lets a single run spend less memory on easy instances and more on hard
-ones, instead of committing to one fixed bound up front.
-
-**Restoring collapsed nodes** (`nodes_restored`): collapse backs up only a
-scalar f-value bound (`forgotten_f`) onto the parent, not the pruned
-subtree's contents. If *every* child of a node gets collapsed away, that
-node becomes a leaf again; if it's later reselected as the best leaf (because
-its backed-up bound made it look competitive) and re-expanded, the search is
-regenerating a subtree it had previously forgotten — each freshly generated
-child in that re-expansion counts as one restored node. This is not a
-perfect restore (the regenerated children are new objects; only the scalar
-f-value bound survived, not the original grandchildren), but it's the only
-"does a collapsed part of the tree come back?" event this simplified SMA*
-has — see the module docstring in `algorithms/dynamic_sma_collapse.py` for
-the exact rule.
-
-## What Two-Level Dynamic SMA* does
-
-It generalizes Dynamic SMA*-Collapse by inserting a second tier between "in
-RAM" and "forgotten forever": a SQLite-backed disk frontier
-(`algorithms/_disk_store.py`). There are now two bounds:
-
-- `B_ram` — as before, but exceeding it **spills** the worst RAM nodes to
-  disk (full state/g/h/f preserved, fully recoverable) instead of collapsing
-  them.
-- `B_total` (`--two-level-total-limit`) — the combined RAM+disk frontier
-  size. Only exceeding *this* triggers a true SMA*-style collapse of the
-  worst disk (or, if disk is empty, RAM) node.
-
-Before every expansion, the algorithm compares the best RAM node against the
-best disk node; if disk has something better-or-equal, it loads a batch
-(`B_ram / 4` nodes) back into RAM before proceeding — this is the invariant
-that the algorithm must never expand a RAM node while a better disk node
-exists. `B_ram` itself adapts on *spill/load pressure* rather than collapse
-pressure: heavy spilling or any loading pushes it up; very light spilling
-with zero loading pushes it down.
-
-### Spill vs. collapse
-
-This distinction is the core idea behind Two-Level Dynamic SMA*:
-
-- **Spill** = move a RAM node to disk. The node is not forgotten — its full
-  record is preserved and can come back into RAM later if it becomes
-  competitive. Triggered by RAM pressure (`len(RAM) > B_ram`).
-- **Collapse** = true SMA* deletion: the node (and the chance to ever revisit
-  it) is gone. Triggered only by *total* pressure (`len(RAM) + len(disk) >
-  B_total`).
-
-### Why Two-Level Dynamic SMA* is still SMA*-based
-
-Because collapse is deferred as long as possible — a node is only ever
-truly forgotten once the *entire* RAM+disk frontier is full, not just RAM —
-but when collapse does happen, it always evicts the globally worst
-(highest-f) resident node, which is exactly SMA*'s eviction policy. The disk
-tier changes *when* SMA*-style forgetting kicks in, not the policy itself.
-
-## Adding a new domain
-
-Implement `SearchProblem` (`domains/base.py`): `initial_state`, `is_goal`,
-`successors`, `heuristic`, and optionally override `state_key` (defaults to
-the state itself, fine for any hashable state). No algorithm code needs to
-change — add instance-generation helpers in `benchmark/instance_generators.py`
-and wire them into `main.py`'s `build_instances`.
-
-## Adding a new algorithm
-
-Subclass `SearchAlgorithm` (`algorithms/base.py`) and implement
-`search(self, problem, limits) -> SearchResult`, populating whichever
-`SearchResult` fields are meaningful. Add it to the `algorithms` list in
-`main.py`. No changes are needed to `benchmark/` or `domains/`.
-
-## Known limitations
-
-- **No wall-clock timeout means a hard run can take a genuinely long time.**
-  This is by design (see **No timeout** above), but on a shared machine,
-  pick a `--max-memory-mb`/`--max-memory-fraction` that fails fast rather
-  than letting the process consume all available RAM.
-- **The memory ceiling is sampled, not continuous** (`_MEMORY_CHECK_INTERVAL`
-  in `algorithms/_run_utils.py`, every 256 checks) to keep the `psutil` call
-  cheap — a single very large allocation between samples could transiently
-  exceed the ceiling before it's caught.
-- **SMA\* is simplified**, not textbook-perfect (applies to `sma_star.py`,
-  `dynamic_sma_collapse.py`, and partially `two_level_dynamic_sma.py`): each
-  state occupies at most one frontier node (global duplicate suppression via
-  `best_g`/`nodes` dict) rather than a pure tree search that can hold the
-  same state under different ancestors; there is no reopening when a cheaper
-  path to an already-seen state is found later (first-discovered g wins);
-  and forgotten nodes back up only a scalar f-value, not subtree shape (fine
-  since both domains are deterministic — successors regenerate identically).
-- **Two-Level Dynamic SMA\* does not revive a parent after all its children
-  are collapsed** (the one piece of classic SMA* backup it skips, to keep
-  disk-paging logic tractable — see the module docstring for the full
-  rationale). Because of this and the no-reopening rule above, a disk node
-  can never become stale, so `stale_disk_nodes_skipped` is always 0 in this
-  implementation.
-- **`best_g` / duplicate detection and the parent-pointer `node_store` are
-  kept fully in RAM** even in Two-Level Dynamic SMA*. Only the heavier
-  per-node (state, g, h, f) frontier records are paged to disk; RAM usage
-  still grows slowly with total nodes generated, just not with frontier
-  size.
-- **The SQLite disk layer is experimental**: one database file per run in a
-  temp/cache directory, deleted afterward unless `--keep-disk` is passed.
-  It is not tuned for throughput (no WAL mode, no connection pooling) —
-  expect `disk_io_time_seconds` to be a non-trivial fraction of runtime once
-  spilling is frequent.
-- **Hard Sokoban instances may not be solved by any algorithm** under a
-  tight `--max-memory-mb`/`--max-memory-fraction` — this is intentional (see
-  **Instance generation**), and the benchmark reports
-  success/memory-limit/node-limit honestly rather than forcing a result.
-- **A* is only expected to reliably solve easy/moderate 15-puzzle
-  instances** before exhausting real memory (it keeps every generated node
-  resident, with no bound); deeper scrambles may run for a long time and/or
-  exhaust `--max-memory-mb` or the `--max-nodes` safety valve (see
-  **Instance generation**).
-- The Sokoban heuristic (sum of each box's distance to its nearest goal) is
-  a common practical choice but is not strictly admissible in general
-  (two boxes can be assigned the same "nearest" goal, undercounting the true
-  cost) — it can occasionally cause A* to return a slightly suboptimal
-  solution rather than guaranteeing optimality.
+- **No wall-clock timeout.** A stopwatch favors A* (no memory-management
+  overhead). Runs stop only on: solution found, RSS > memory ceiling, or the
+  `--max-nodes` safety valve.
+- **Memory ceiling via `psutil`** sampled every 256 limit-checks
+  (`algorithms/_run_utils.py`), reported peak is
+  `max(tracemalloc_peak, sampled_rss)`.
 
 ## Tests
 
@@ -444,25 +90,4 @@ Subclass `SearchAlgorithm` (`algorithms/base.py`) and implement
 python -m pytest tests/ -q
 ```
 
-Covers: 15-puzzle successor legality and zero-heuristic-at-goal, Sokoban
-successor generation (moves and pushes) and A* solving a tiny instance, A*
-solving an easy 15-puzzle instance, Dynamic SMA*-Collapse running without
-crashing across several instances (plus targeted `nodes_restored` tests: a
-unit-level check of exactly when a re-expansion counts as a restore, and an
-end-to-end run under tight memory pressure that forces at least one real
-collapse-then-restore), Two-Level Dynamic SMA* running without crashing and
-correctly creating/cleaning up (or keeping, when asked) its SQLite disk
-cache, and the benchmark runner producing CSV/JSON output for all five
-algorithms. `tests/test_instance_generators.py` covers Korf-instance parsing
-(column-name aliases, all three `state` formats, invalid-row errors),
-`get_instance_by_optimal_depth`'s exact/deterministic-seed/closest-depth-
-fallback selection logic, and an end-to-end check that A* solves a Korf
-instance at exactly its `known_optimal_depth`. `tests/test_analyze.py`
-additionally covers the results-analysis module against a small hand-built
-fake CSV: safe parsing of booleans/numbers/blanks, optimality-gap computation
-(both `_vs_astar` and `_vs_known_optimal`), every summary/comparison CSV
-(including the header-only/empty-input, zero-denominator-ratio, and
-missing-`nodes_restored`-defaults-to-zero edge cases), the winners/notes
-logic, and an end-to-end `analyze_results()` run that checks all six output
-files are produced.
-
+109 tests, all passing.

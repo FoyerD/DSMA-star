@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+import re
 import statistics
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -29,6 +32,14 @@ _COUNT_FIELDS = (
     "max_frontier_size",
     "max_depth_reached",
     "reexpansions",
+    "total_collapses",
+    "max_proc_tree_size",
+    "proc_switches",
+    "phase1_expanded",
+    "phase2_expanded",
+    "actual_num_procs",
+    "requested_num_procs",
+    "winning_proc_expansions",
 )
 
 # Columns that are genuinely optional (None means "not applicable"/"unknown",
@@ -44,15 +55,26 @@ _OPTIONAL_FLOAT_FIELDS = (
 _BOOL_FIELDS = ("success", "node_limit_reached", "memory_limit_reached", "stack_exhausted")
 
 ASTAR_NAME = "astar"
-BASELINE_ALGORITHMS = ("astar", "ilbfs")
+BASELINE_ALGORITHMS = ("astar", "ilbfs", "rbfs")
 DISPLAY_NAMES = {
     "astar": "A*",
     "ilbfs": "ILBFS",
+    "rbfs": "RBFS",
+    "mp-bfs-best_first": "MP-BFS (best_first)",
+    "mp-bfs-round_robin": "MP-BFS (round_robin)",
+    "mp-bfs-proportional": "MP-BFS (proportional)",
+    "mp-rbfs-best_first": "MP-RBFS (best_first)",
+    "mp-rbfs-round_robin": "MP-RBFS (round_robin)",
+    "mp-rbfs-proportional": "MP-RBFS (proportional)",
 }
 
-# Reserved for future use (MP-ILBFS will slot in as "proposed").
-PROPOSED_ALGORITHMS: Tuple[str, ...] = ()
-_COMPARISON_PAIRS: List[Tuple[str, str]] = []
+PROPOSED_ALGORITHMS = ("mp-bfs-best_first", "mp-rbfs-best_first")
+_COMPARISON_PAIRS = [
+    ("mp-rbfs-best_first", "ilbfs"),
+    ("mp-rbfs-best_first", "rbfs"),
+    ("mp-rbfs-best_first", "mp-bfs-best_first"),
+    ("mp-bfs-best_first", "astar"),
+]
 
 
 def _display(name: str) -> str:
@@ -196,6 +218,11 @@ def _aggregate(rows: List[Row]) -> Dict[str, Any]:
     known_gaps = [r["optimality_gap_vs_known_optimal"] for r in rows if r["optimality_gap_vs_known_optimal"] is not None]
     peak_mem = [r["peak_memory_mb"] for r in rows if r["peak_memory_mb"] is not None]
 
+    expanded = [r["nodes_expanded"] for r in rows]
+    reexpansions = [r["reexpansions"] for r in rows]
+    collapses = [r["total_collapses"] for r in rows]
+    tree_sizes = [r["max_proc_tree_size"] for r in rows]
+
     return {
         "total_runs": total,
         "solved_runs": n_solved,
@@ -207,12 +234,22 @@ def _aggregate(rows: List[Row]) -> Dict[str, Any]:
         "avg_runtime_s_solved": _mean(runtimes_solved),
         "median_runtime_s_solved": _median(runtimes_solved),
         "avg_peak_memory_mb": _mean(peak_mem),
-        "avg_nodes_expanded": _mean([r["nodes_expanded"] for r in rows]),
+        "avg_nodes_expanded": _mean(expanded),
         "avg_nodes_generated": _mean([r["nodes_generated"] for r in rows]),
         "avg_solution_cost_solved": _mean(costs_solved),
         "avg_solution_depth_solved": _mean(depths_solved),
         "avg_optimality_gap_vs_astar": _mean(gaps),
         "avg_optimality_gap_vs_known_optimal": _mean(known_gaps),
+        "avg_reexpansions": _mean(reexpansions),
+        "reexpansion_ratio": _safe_ratio(sum(reexpansions), sum(expanded)),
+        "avg_total_collapses": _mean(collapses),
+        "collapse_ratio": _safe_ratio(sum(collapses), sum(expanded)),
+        "avg_max_proc_tree_size": _mean(tree_sizes),
+        "avg_proc_switches": _mean([r["proc_switches"] for r in rows]),
+        "avg_phase1_expanded": _mean([r["phase1_expanded"] for r in rows]),
+        "avg_phase2_expanded": _mean([r["phase2_expanded"] for r in rows]),
+        "avg_actual_num_procs": _mean([r["actual_num_procs"] for r in rows]),
+        "avg_winning_proc_expansions": _mean([r["winning_proc_expansions"] for r in rows]),
     }
 
 
@@ -247,6 +284,16 @@ _ALGORITHM_SUMMARY_FIELDS = [
     "avg_solution_depth_solved",
     "avg_optimality_gap_vs_astar",
     "avg_optimality_gap_vs_known_optimal",
+    "avg_reexpansions",
+    "reexpansion_ratio",
+    "avg_total_collapses",
+    "collapse_ratio",
+    "avg_max_proc_tree_size",
+    "avg_proc_switches",
+    "avg_phase1_expanded",
+    "avg_phase2_expanded",
+    "avg_actual_num_procs",
+    "avg_winning_proc_expansions",
 ]
 
 
@@ -286,6 +333,16 @@ _DOMAIN_ALGORITHM_SUMMARY_FIELDS = [
     "avg_solution_depth_solved",
     "avg_optimality_gap_vs_astar",
     "avg_optimality_gap_vs_known_optimal",
+    "avg_reexpansions",
+    "reexpansion_ratio",
+    "avg_total_collapses",
+    "collapse_ratio",
+    "avg_max_proc_tree_size",
+    "avg_proc_switches",
+    "avg_phase1_expanded",
+    "avg_phase2_expanded",
+    "avg_actual_num_procs",
+    "avg_winning_proc_expansions",
 ]
 
 
@@ -300,6 +357,66 @@ def write_domain_algorithm_summary(results: List[Row], out_dir: Path) -> List[Di
         out_rows.append({"domain_name": domain_name, "algorithm_name": algorithm_name, **stats})
 
     _write_csv(out_dir / "domain_algorithm_summary.csv", _DOMAIN_ALGORITHM_SUMMARY_FIELDS, out_rows)
+    return out_rows
+
+
+# --------------------------------------------------------------------------
+# 2b. by_difficulty_summary.csv
+# --------------------------------------------------------------------------
+
+_DIFFICULTY_SUMMARY_FIELDS = [
+    "difficulty_label",
+    "difficulty_depth",
+    "algorithm_name",
+    "total_runs",
+    "solved_runs",
+    "success_rate",
+    "memory_limit_rate",
+    "node_limit_rate",
+    "avg_runtime_s_solved",
+    "avg_peak_memory_mb",
+    "avg_nodes_expanded",
+    "avg_nodes_generated",
+    "avg_reexpansions",
+    "reexpansion_ratio",
+    "avg_total_collapses",
+    "collapse_ratio",
+    "avg_max_proc_tree_size",
+    "avg_proc_switches",
+    "avg_solution_cost_solved",
+    "avg_optimality_gap_vs_astar",
+    "avg_optimality_gap_vs_known_optimal",
+]
+
+
+def _parse_depth(label: str) -> Optional[int]:
+    """Extract the trailing depth integer from labels like `depth_10`,
+    `amit_depth_24`, or `korf_depth_41`."""
+    match = re.search(r"(\d+)\s*$", label.strip())
+    return int(match.group(1)) if match else None
+
+
+def write_difficulty_summary(results: List[Row], out_dir: Path) -> List[Dict[str, Any]]:
+    """One row per (difficulty_label, algorithm_name). Adds the per-depth view
+    that `domain_algorithm_summary` lacks, and lets a reader see at a glance
+    where each algorithm's success collapses and how memory behaves there."""
+    by_group: Dict[Tuple[str, str], List[Row]] = defaultdict(list)
+    for row in results:
+        by_group[(row["instance_difficulty"], row["algorithm_name"])].append(row)
+
+    out_rows = []
+    for (difficulty, algorithm_name) in sorted(by_group, key=lambda k: (_parse_depth(k[0]) or -1, k[0], k[1])):
+        stats = _aggregate(by_group[(difficulty, algorithm_name)])
+        out_rows.append(
+            {
+                "difficulty_label": difficulty,
+                "difficulty_depth": _parse_depth(difficulty),
+                "algorithm_name": algorithm_name,
+                **stats,
+            }
+        )
+
+    _write_csv(out_dir / "by_difficulty_summary.csv", _DIFFICULTY_SUMMARY_FIELDS, out_rows)
     return out_rows
 
 
@@ -535,6 +652,41 @@ def write_proposed_vs_baselines(results: List[Row], out_dir: Path) -> List[Dict[
 
 
 # --------------------------------------------------------------------------
+# 5b. summary.json (curated view, mirrors the CSVs)
+# --------------------------------------------------------------------------
+
+
+def write_summary_json(
+    results: List[Row],
+    out_dir: Path,
+    algorithm_summary: Optional[List[Dict[str, Any]]] = None,
+    difficulty_summary: Optional[List[Dict[str, Any]]] = None,
+    proposed_vs_baselines: Optional[List[Dict[str, Any]]] = None,
+) -> Path:
+    """Write one JSON file bundling the curated summaries. The raw CSV stays the
+    single source of truth; this file exists so a paper pipeline can pull
+    aggregate numbers without re-parsing CSVs."""
+    if algorithm_summary is None:
+        algorithm_summary = write_algorithm_summary(results, out_dir)
+    if difficulty_summary is None:
+        difficulty_summary = write_difficulty_summary(results, out_dir)
+    if proposed_vs_baselines is None:
+        proposed_vs_baselines = write_proposed_vs_baselines(results, out_dir)
+
+    payload = {
+        "analysis_date": date.today().isoformat(),
+        "input_rows": len(results),
+        "algorithms": algorithm_summary,
+        "difficulties": difficulty_summary,
+        "comparisons": proposed_vs_baselines,
+    }
+    path = out_dir / "summary.json"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
+
+
+# --------------------------------------------------------------------------
 # 6. human_readable_summary.md
 # --------------------------------------------------------------------------
 
@@ -572,6 +724,7 @@ def write_markdown_summary(
     algorithm_summary: Optional[List[Dict[str, Any]]] = None,
     domain_algorithm_summary: Optional[List[Dict[str, Any]]] = None,
     proposed_vs_baselines: Optional[List[Dict[str, Any]]] = None,
+    difficulty_summary: Optional[List[Dict[str, Any]]] = None,
 ) -> Path:
     if algorithm_summary is None:
         algorithm_summary = write_algorithm_summary(results, out_dir)
@@ -579,6 +732,8 @@ def write_markdown_summary(
         domain_algorithm_summary = write_domain_algorithm_summary(results, out_dir)
     if proposed_vs_baselines is None:
         proposed_vs_baselines = write_proposed_vs_baselines(results, out_dir)
+    if difficulty_summary is None:
+        difficulty_summary = write_difficulty_summary(results, out_dir)
 
     lines: List[str] = ["# Benchmark Results Summary", ""]
 
@@ -597,10 +752,46 @@ def write_markdown_summary(
         for r in sorted(domain_algorithm_summary, key=lambda x: x["algorithm_name"]):
             if r["domain_name"] != domain:
                 continue
+            detail = (
+                f", reexp {_fmt(r['avg_reexpansions'])} ({_fmt_pct(r['reexpansion_ratio'])} of expanded)"
+                if r["avg_reexpansions"]
+                else ""
+            )
+            collapse_detail = ""
+            if r["avg_total_collapses"]:
+                collapse_detail = (
+                    f", collapses {_fmt(r['avg_total_collapses'])} ({_fmt_pct(r['collapse_ratio'])} of expanded), "
+                    f"max proc tree {_fmt(r['avg_max_proc_tree_size'])} nodes"
+                )
             lines.append(
                 f"- **{_display(r['algorithm_name'])}**: success {_fmt_pct(r['success_rate'])}, "
                 f"avg runtime (solved) {_fmt(r['avg_runtime_s_solved'])}s, "
                 f"avg peak memory {_fmt(r['avg_peak_memory_mb'])} MB"
+                f"{detail}{collapse_detail}"
+            )
+        lines.append("")
+
+    lines.append("## Per-difficulty results")
+    lines.append("")
+    by_depth: Dict[Optional[int], List[Dict[str, Any]]] = defaultdict(list)
+    for r in difficulty_summary:
+        by_depth[r["difficulty_depth"]].append(r)
+    for depth in sorted(by_depth, key=lambda d: (d is None, d)):
+        label = by_depth[depth][0]["difficulty_label"]
+        lines.append(f"### {label}" + (f" (optimal depth {depth})" if depth is not None else ""))
+        lines.append("")
+        for r in sorted(by_depth[depth], key=lambda x: x["algorithm_name"]):
+            lines.append(
+                f"- **{_display(r['algorithm_name'])}**: success {_fmt_pct(r['success_rate'])}, "
+                f"avg runtime (solved) {_fmt(r['avg_runtime_s_solved'])}s, "
+                f"avg peak memory {_fmt(r['avg_peak_memory_mb'])} MB, "
+                f"avg expanded {_fmt(r['avg_nodes_expanded'], 0)}, "
+                f"avg reexp {_fmt(r['avg_reexpansions'], 0)}"
+                + (
+                    f", avg collapses {_fmt(r['avg_total_collapses'], 0)}, max proc tree {_fmt(r['avg_max_proc_tree_size'], 0)}"
+                    if r["avg_total_collapses"]
+                    else ""
+                )
             )
         lines.append("")
 
@@ -644,15 +835,23 @@ def analyze_results(input_csv: Path, output_dir: Path) -> None:
     output_dir = Path(output_dir)
     algorithm_summary = write_algorithm_summary(results, output_dir)
     domain_algorithm_summary = write_domain_algorithm_summary(results, output_dir)
-    write_instance_comparison(results, output_dir)
+    difficulty_summary = write_difficulty_summary(results, output_dir)
     write_winners_by_instance(results, output_dir)
     proposed_vs_baselines = write_proposed_vs_baselines(results, output_dir)
+    write_summary_json(
+        results,
+        output_dir,
+        algorithm_summary=algorithm_summary,
+        difficulty_summary=difficulty_summary,
+        proposed_vs_baselines=proposed_vs_baselines,
+    )
     write_markdown_summary(
         results,
         output_dir,
         algorithm_summary=algorithm_summary,
         domain_algorithm_summary=domain_algorithm_summary,
         proposed_vs_baselines=proposed_vs_baselines,
+        difficulty_summary=difficulty_summary,
     )
 
 

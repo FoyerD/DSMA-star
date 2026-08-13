@@ -18,7 +18,7 @@ from typing import List
 
 import psutil
 
-from algorithms import AStar, ILBFS, MPRBFS, RBFS
+from algorithms import AStar, ILBFS, MPBFS, MPRBFS, RBFS
 from algorithms.base import SearchAlgorithm, SearchLimits
 from benchmark.analyze import analyze_results
 from benchmark.instance_generators import (
@@ -118,15 +118,19 @@ def parse_args() -> argparse.Namespace:
             "astar",
             "ilbfs",
             "rbfs",
+            "mp-bfs-best_first",
+            "mp-bfs-round_robin",
+            "mp-bfs-proportional",
             "mp-rbfs-best_first",
             "mp-rbfs-round_robin",
             "mp-rbfs-proportional",
         ],
-        default=["astar", "ilbfs", "rbfs", "mp-rbfs-best_first", "mp-rbfs-round_robin", "mp-rbfs-proportional"],
+        default=["astar", "ilbfs", "rbfs", "mp-bfs-best_first", "mp-rbfs-best_first"],
         help=(
             "Which algorithms to run in this benchmark. Include one or more "
-            "of the mp-rbfs-<scheduler> variants to compare Multi-Path RBFS "
-            "scheduling policies against A*/ILBFS/RBFS in a single run."
+            "of the mp-bfs-<scheduler> / mp-rbfs-<scheduler> variants to "
+            "compare the multi-path scheduling policies (best_first, "
+            "round_robin, proportional) against A*/ILBFS/RBFS in a single run."
         ),
     )
     parser.add_argument(
@@ -134,7 +138,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=100,
         help=(
-            "mp-rbfs: number of Phase-1 frontier nodes to build before switching to "
+            "mp-bfs / mp-rbfs: number of Phase-1 frontier nodes to build before switching to "
             "per-proc search (the actual count may be slightly higher -- Phase 1 always "
             "finishes expanding a node's full sibling set before stopping)."
         ),
@@ -143,14 +147,14 @@ def parse_args() -> argparse.Namespace:
         "--proportional-seed",
         type=int,
         default=0,
-        help="mp-rbfs proportional scheduler: RNG seed for reproducible stochastic scheduling.",
+        help="mp-bfs / mp-rbfs proportional scheduler: RNG seed for reproducible stochastic scheduling.",
     )
     parser.add_argument(
         "--proportional-weight-power",
         type=float,
         default=1.0,
         help=(
-            "mp-rbfs proportional scheduler: proc weight = 1 / (f + eps) ** power. "
+            "mp-bfs / mp-rbfs proportional scheduler: proc weight = 1 / (f + eps) ** power. "
             "Raise above 1.0 to sharpen preference for low-f procs."
         ),
     )
@@ -180,6 +184,14 @@ _ALGORITHM_FACTORIES = {
     "astar": lambda args: AStar(),
     "ilbfs": lambda args: ILBFS(),
     "rbfs": lambda args: RBFS(),
+    "mp-bfs-best_first": lambda args: MPBFS(num_procs=args.num_procs, scheduler="best_first"),
+    "mp-bfs-round_robin": lambda args: MPBFS(num_procs=args.num_procs, scheduler="round_robin"),
+    "mp-bfs-proportional": lambda args: MPBFS(
+        num_procs=args.num_procs,
+        scheduler="proportional",
+        seed=args.proportional_seed,
+        weight_power=args.proportional_weight_power,
+    ),
     "mp-rbfs-best_first": lambda args: MPRBFS(num_procs=args.num_procs, scheduler="best_first"),
     "mp-rbfs-round_robin": lambda args: MPRBFS(num_procs=args.num_procs, scheduler="round_robin"),
     "mp-rbfs-proportional": lambda args: MPRBFS(

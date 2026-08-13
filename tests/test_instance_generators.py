@@ -6,6 +6,7 @@ import pytest
 from algorithms import AStar
 from algorithms.base import SearchLimits
 from benchmark.instance_generators import (
+    DEFAULT_KORF_CSV,
     KorfPuzzleInstance,
     generate_korf_puzzle_instances,
     generate_npuzzle_instances,
@@ -95,7 +96,7 @@ def test_bundled_korfs100_csv_loads_skipping_known_bad_rows(capsys):
     # handles the actual bundled file. Some rows may have been fixed over time;
     # verify all valid rows load and any malformed ones are skipped gracefully.
     repo_root = Path(__file__).resolve().parent.parent
-    instances = load_korf_instances(repo_root / "korfs100.csv")
+    instances = load_korf_instances(repo_root / DEFAULT_KORF_CSV)
     assert len(instances) >= 97  # at least 97 valid rows; 100 if all fixed
     ids = {i.instance_id for i in instances}
     # Verify we loaded a reasonable set

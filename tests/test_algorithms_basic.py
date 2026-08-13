@@ -106,6 +106,37 @@ def test_aggregate_by_domain_and_algorithm_reports_mean_and_sample_std():
     assert summary.std_nodes_expanded == statistics.stdev(nodes_expanded)
 
 
+def test_aggregate_reports_multi_path_and_known_optimal_metrics():
+    from algorithms.base import SearchResult
+
+    results = [
+        SearchResult(
+            algorithm_name="mp-rbfs-best_first", domain_name="n_puzzle", instance_id="d24",
+            instance_difficulty="amit_depth_24", known_optimal_depth=24, success=True,
+            solution_cost=25, nodes_expanded=35510, nodes_generated=63812, reexpansions=6652,
+            total_collapses=35043, max_proc_tree_size=45, proc_switches=1234,
+            phase1_expanded=17, phase2_expanded=35493,
+        ),
+        SearchResult(
+            algorithm_name="mp-rbfs-best_first", domain_name="n_puzzle", instance_id="d24",
+            instance_difficulty="amit_depth_24", known_optimal_depth=24, success=True,
+            solution_cost=24, nodes_expanded=27000, nodes_generated=50000, reexpansions=5000,
+            total_collapses=27000, max_proc_tree_size=40, proc_switches=900,
+            phase1_expanded=18, phase2_expanded=26982,
+        ),
+    ]
+    summaries = aggregate_by_domain_and_algorithm(results)
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert summary.avg_reexpansions == statistics.fmean([6652, 5000])
+    assert summary.avg_total_collapses == statistics.fmean([35043, 27000])
+    assert summary.avg_max_proc_tree_size == statistics.fmean([45, 40])
+    assert summary.avg_proc_switches == statistics.fmean([1234, 900])
+    # gap vs known optimal: (25-24)/24 and (24-24)/24
+    assert summary.avg_optimality_gap_vs_known_optimal == statistics.fmean([1 / 24, 0.0])
+    assert summary.std_optimality_gap_vs_known_optimal == statistics.stdev([1 / 24, 0.0])
+
+
 def test_aggregate_std_is_zero_with_a_single_seed():
     instances = generate_puzzle_instances(seeds=[7], size=3, scramble_depths=[5])
     results = run_benchmark(instances, [AStar()], LIMITS)

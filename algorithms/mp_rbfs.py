@@ -1,22 +1,38 @@
-"""mp-rbfs: Multi-Path RBFS.
+"""mp-rbfs: Multi-Path RBFS (genuine RBFS per proc).
 
-Phase 1 runs an ordinary best-first search (f = g + h) from the root until
-OPEN holds at least `num_procs` nodes, always finishing every child of a
-node it starts expanding (the frontier stays a complete cut of the search
-tree, never a partially-expanded node -- see `_run_phase1`). Phase 2 turns
-every surviving Phase-1 frontier node into an independent "proc": a private
-best-first search restricted to that node's subtree. A pluggable
-`Scheduler` (see `mp_rbfs_schedulers.py`) decides which proc receives the
-next single-node expansion; control returns to the scheduler after every
-expansion. All procs share one global `best_g` dict for duplicate
-detection, so a state discovered by one proc with a better g invalidates
-(but does not need to be eagerly purged from) whichever other proc's heap
-is still holding the worse entry -- stale entries are detected lazily at
-pop time. The first proc to pop a goal state wins and the whole run stops,
-so mp-rbfs is intentionally allowed to return a suboptimal solution;
-Best-First scheduling tends closest to plain best-first search, Round-Robin
-and Proportional trade optimality for fairness/robustness against
-starvation. See docs/mp_rbfs.md for the full design.
+Phase 1 builds the initial frontier exactly as in mp-bfs (`_run_phase1`), but
+Phase 2 is different: each proc is a *real* Recursive Best-First Search of
+its own subtree, implemented with the iterative Collapse/Restore loop that
+also powers `ilbfs.py` (which is RBFS with an explicit heap + tree instead of
+a recursion stack). What `expand_one()` performs is exactly one outer-loop
+iteration of that loop, so the search state (open heap, live tree, `oldbest`)
+persists on the proc between scheduler quanta.
+
+RBFS semantics, per proc:
+
+- The proc expands the lowest-F node in its own open list.
+- When the popped node is no longer in the branch currently being explored
+  (`oldbest != node.parent`), the Collapse loop walks up from `oldbest`,
+  backing up each node's stored F to the min over its (live) children,
+  incrementing its `collapse_count` oscillation penalty, deleting its
+  children from the proc's TREE (heap entries store keys, so the dead
+  subtrees are GC'd -- the O(b * d) per-proc memory bound), and re-pushing
+  the node with its backed-up F. After any collapse the heap is rebuilt from
+  the live tree to purge stale entries.
+- The walk never collapses above the proc's own root (the root is the top of
+  its RBFS recursion), even when the root itself is re-popped and
+  re-expanded.
+- Duplicate detection uses the *permanent* shared `best_g` dict: a state
+  already known at a strictly better g is skipped, but a state the proc
+  itself generated and later collapsed may be re-discovered at the same g --
+  this re-expansion is what lets RBFS find a goal after a bound backs up.
+
+The scheduler contract (see `mp_schedulers.py`) is unchanged from mp-bfs.
+`peek_f()` now returns the proc's *backed-up* effective priority
+``F + collapse_count`` of its next node, so a proc whose branch just
+collapsed naturally drops in scheduling priority and other procs get the
+"second chances" that single-direction procs lack. First goal found wins
+(suboptimal solutions are acceptable by design).
 """
 from __future__ import annotations
 
@@ -30,60 +46,45 @@ from domains.base import SearchProblem
 
 from ._run_utils import MemoryLimitError, NodeLimitError, RunTracker
 from .base import SearchAlgorithm, SearchLimits, SearchResult
-from .mp_rbfs_schedulers import build_scheduler
+from .mp_common import _ExpandOutcome, _Node, _Phase1Result, _live_frontier_nodes, _reconstruct, _run_phase1
+from .mp_schedulers import build_scheduler
 
 _INF = float("inf")
 
 
 @dataclass(slots=True)
-class _Node:
-    """Minimal node record.
-
-    No `children` dict (unlike ILBFS, a proc never revisits a node's
-    children after generating them once -- there is no collapse to undo).
-    No separate `h` field (only needed transiently while computing `f`). No
-    `depth` field (`g` already doubles as depth for this domain's unit
-    action costs, so a separate counter would be redundant).
-    """
-
-    state: Any
-    key: Any
-    g: float
-    f: float  # g + h, pathmax-adjusted: max(parent.f, g + h)
-    parent: Optional["_Node"]
-    action: Any
-
-
-@dataclass(slots=True)
-class _ExpandOutcome:
-    node: _Node
-    is_goal: bool
-
-
-@dataclass(slots=True)
 class _Proc:
-    """One independent best-first search restricted to a Phase-1 frontier
-    node's subtree.
+    """One independent RBFS search restricted to a Phase-1 frontier node's
+    subtree.
 
-    Owns a private OPEN heap (entries are ``(f, -g, counter, node)`` tuples,
-    matching the tie-break convention used elsewhere in this project:
-    depth/`g` prefers deeper nodes on an `f` tie, and the monotonic counter
-    guarantees heapq never has to compare two `_Node` objects directly).
-    Duplicate detection against every other proc happens purely through the
-    *shared* `best_g` dict passed into `expand_one` -- procs never read or
-    write each other's heaps.
+    Owns a private OPEN heap (entries are ``(F + collapse_count, -depth,
+    state_key)`` tuples, matching the tie-break convention of `ilbfs.py`
+    -- see docs/ilbfs.md section 8 -- and storing *keys* rather than node
+    references so collapsed subtrees can be garbage collected immediately)
+    and a private TREE (`state_key -> _Node`, the proc's live search tree).
+    `oldbest` is the most recently expanded node, used by the Collapse loop.
+
+    The shared `best_g` dict is the only cross-proc communication: it is
+    permanent (never purged), so it doubles as the transposition table, while
+    the proc's own TREE is what collapse actually shrinks.
     """
 
     proc_id: int
-    heap: List[Tuple[float, float, int, _Node]]
+    heap: List[Tuple[float, float, Any]]
+    tree: Dict[Any, _Node]
+    root: _Node
+    oldbest: Optional[_Node] = None
     expansions: int = 0
     stale_skips: int = 0
+    reexpansions: int = 0
+    collapses: int = 0
     active: bool = True
 
     def peek_f(self) -> float:
-        # May reflect a stale (superseded) entry -- see module docstring.
-        # Cheap (O(1)) and self-correcting: resolved lazily the next time
-        # this proc is actually selected and its heap is drained below.
+        """The backed-up effective priority of the next node this proc will
+        expand (top of the open heap), or +inf when the heap is empty. After
+        a collapse this reflects the backed-up F + collapse_count, which is
+        exactly what the scheduler should rank procs by."""
         return self.heap[0][0] if self.heap else _INF
 
     def expand_one(
@@ -94,14 +95,18 @@ class _Proc:
         counter: "itertools.count[int]",
         state_key,
     ) -> Optional[_ExpandOutcome]:
-        """Pop-and-validate until a live node is found (discarding any
-        stale entries along the way), then perform exactly one real
-        expansion. Returns None if the proc's heap drains to empty without
-        ever finding a live node -- the proc is exhausted."""
+        """Perform exactly one outer-loop iteration of the iterative RBFS
+        (Collapse/Restore) loop for this proc's subtree, then yield control
+        back to the scheduler. Returns None if the proc's heap drains to
+        empty -- the proc is exhausted."""
         heap = self.heap
         while heap:
-            _f, _neg_g, _tie, node = heapq.heappop(heap)
-            if node.g > best_g.get(node.key, _INF):
+            popped_priority, _neg_depth, key = heapq.heappop(heap)
+            node = self.tree.get(key)
+            if node is None or node.F + node.collapse_count != popped_priority:
+                self.stale_skips += 1
+                continue  # collapsed away, or its F was updated by a collapse
+            if node.g > best_g.get(key, _INF):
                 self.stale_skips += 1
                 continue  # superseded by a better path some proc already found
 
@@ -109,20 +114,92 @@ class _Proc:
                 self.active = bool(heap)
                 return _ExpandOutcome(node=node, is_goal=True)
 
+            # Collapse loop (ilbfs.py steps 7-11): while oldbest is not
+            # node.parent, back up oldbest's F, delete its children from the
+            # TREE, re-push it, and walk up toward node.parent. The walk
+            # stops at the proc's own root and never touches the shared
+            # Phase-1 ancestors above it.
+            collapsed = False
+            while self.oldbest is not None and self.oldbest != node.parent:
+                collapsed = True
+                ob = self.oldbest
+                if ob.children:
+                    ob.F = min(c.F for c in ob.children.values())
+                else:
+                    ob.F = ob.f
+                ob.collapse_count += 1
+                self.collapses += 1
+                heapq.heappush(
+                    heap,
+                    (ob.F + ob.collapse_count, -ob.depth, state_key(ob.state)),
+                )
+                for ck in list(ob.children.keys()):
+                    if self.tree.get(ck) is ob.children[ck]:
+                        del self.tree[ck]
+                ob.children.clear()
+                self.oldbest = ob.parent
+                if ob is self.root:
+                    self.oldbest = None
+                    break
+
+            # Heap purge on collapse (docs/ilbfs.md section 8): rebuild the
+            # heap from the live TREE so stale entries never accumulate.
+            if collapsed:
+                heap[:] = [
+                    (n.F + n.collapse_count, -n.depth, state_key(n.state))
+                    for n in self.tree.values()
+                ]
+                heapq.heapify(heap)
+
+            if node.F > node.f:
+                self.reexpansions += 1
+
             self.expansions += 1
             for action, next_state, cost in problem.successors(node.state):
                 next_key = state_key(next_state)
                 new_g = node.g + cost
-                if new_g < best_g.get(next_key, _INF):
-                    best_g[next_key] = new_g
-                    h = problem.heuristic(next_state)
-                    f_child = new_g + h
-                    if node.f > f_child:
-                        f_child = node.f  # pathmax
-                    child = _Node(state=next_state, key=next_key, g=new_g, f=f_child, parent=node, action=action)
-                    heapq.heappush(heap, (child.f, -child.g, next(counter), child))
-                    tracker.nodes_generated += 1
 
+                live = self.tree.get(next_key)
+                if live is not None and live.g <= new_g:
+                    continue  # already live in this subtree at equal/better g
+                if best_g.get(next_key, _INF) < new_g:
+                    continue  # a strictly better path is known globally
+                # Otherwise accept: a brand-new state, a strictly better path,
+                # or re-discovery at the same g of a state this proc generated
+                # and later collapsed (RBFS re-expansion).
+
+                best_g[next_key] = new_g
+                tracker.nodes_generated += 1
+
+                next_h = problem.heuristic(next_state)
+                next_f = new_g + next_h
+
+                # Pathmax / F propagation (RBFS pseudocode lines 5-7):
+                # F(child) = max(F(node), f(child)) when F(node) > f(node).
+                if node.F > node.f and node.F > next_f:
+                    next_F = node.F
+                else:
+                    next_F = next_f
+
+                child = _Node(
+                    state=next_state,
+                    key=next_key,
+                    g=new_g,
+                    h=next_h,
+                    f=next_f,
+                    F=next_F,
+                    parent=node,
+                    action=action,
+                    depth=node.depth + 1,
+                )
+                node.children[next_key] = child
+                self.tree[next_key] = child
+                heapq.heappush(
+                    heap,
+                    (child.F + child.collapse_count, -child.depth, next_key),
+                )
+
+            self.oldbest = node
             self.active = bool(heap)
             return _ExpandOutcome(node=node, is_goal=False)
 
@@ -130,106 +207,23 @@ class _Proc:
         return None
 
 
-@dataclass(slots=True)
-class _Phase1Result:
-    goal_node: Optional[_Node]
-    open_heap: List[Tuple[float, float, int, _Node]]
-    best_g: Dict[Any, float]
-    counter: "itertools.count[int]"
-    expanded: int
-    stale: int
-    max_frontier_size: int
-    max_depth_reached: int
-
-
-def _run_phase1(problem: SearchProblem, num_procs: int, tracker: RunTracker) -> _Phase1Result:
-    """Ordinary best-first search from the root until OPEN has >= num_procs
-    nodes. Never stops mid-expansion: the entire successors loop for a node
-    always completes before the frontier-size condition is re-checked, so
-    the final frontier may exceed num_procs but is always a complete cut."""
-    state_key = problem.state_key
-    counter: "itertools.count[int]" = itertools.count()
-
-    start = problem.initial_state
-    start_key = state_key(start)
-    root = _Node(state=start, key=start_key, g=0.0, f=problem.heuristic(start), parent=None, action=None)
-
-    best_g: Dict[Any, float] = {start_key: 0.0}
-    tracker.nodes_generated = 1
-    open_heap: List[Tuple[float, float, int, _Node]] = [(root.f, -root.g, next(counter), root)]
-
-    goal_node: Optional[_Node] = None
-    expanded = 0
-    stale = 0
-    max_frontier_size = 1
-    max_depth_reached = 0
-
-    while open_heap and len(open_heap) < num_procs:
-        tracker.check_limits()
-        _f, _neg_g, _tie, node = heapq.heappop(open_heap)
-        if node.g > best_g.get(node.key, _INF):
-            stale += 1
-            continue  # stale: a better path to this state was already found
-
-        max_depth_reached = max(max_depth_reached, int(node.g))
-        if problem.is_goal(node.state):
-            goal_node = node
-            break
-
-        expanded += 1
-        for action, next_state, cost in problem.successors(node.state):
-            next_key = state_key(next_state)
-            new_g = node.g + cost
-            if new_g < best_g.get(next_key, _INF):
-                best_g[next_key] = new_g
-                h = problem.heuristic(next_state)
-                f_child = new_g + h
-                if node.f > f_child:
-                    f_child = node.f  # pathmax
-                child = _Node(state=next_state, key=next_key, g=new_g, f=f_child, parent=node, action=action)
-                heapq.heappush(open_heap, (child.f, -child.g, next(counter), child))
-                tracker.nodes_generated += 1
-
-        max_frontier_size = max(max_frontier_size, len(open_heap))
-
-    return _Phase1Result(
-        goal_node=goal_node,
-        open_heap=open_heap,
-        best_g=best_g,
-        counter=counter,
-        expanded=expanded,
-        stale=stale,
-        max_frontier_size=max_frontier_size,
-        max_depth_reached=max_depth_reached,
-    )
-
-
 def _build_procs(phase1: _Phase1Result) -> List[_Proc]:
-    """Turn every live (non-stale) Phase-1 frontier node into its own proc."""
+    """Turn every live (non-stale) Phase-1 frontier node into its own proc,
+    seeding each proc's TREE with its root node."""
     procs: List[_Proc] = []
-    for _f, _neg_g, _tie, node in phase1.open_heap:
-        if node.g > phase1.best_g.get(node.key, _INF):
-            continue  # superseded during phase 1, not a live frontier node
+    for node in _live_frontier_nodes(phase1):
         pid = len(procs)
-        procs.append(_Proc(proc_id=pid, heap=[(node.f, -node.g, next(phase1.counter), node)]))
+        key = node.key
+        heap = [(node.F + node.collapse_count, -node.depth, key)]
+        procs.append(_Proc(proc_id=pid, heap=heap, tree={key: node}, root=node))
     return procs
-
-
-def _reconstruct(node: _Node) -> List[Any]:
-    actions: List[Any] = []
-    current = node
-    while current.parent is not None:
-        actions.append(current.action)
-        current = current.parent
-    actions.reverse()
-    return actions
 
 
 class MPRBFS(SearchAlgorithm):
     """Multi-Path RBFS: a Phase-1 best-first frontier build followed by
-    `num_procs` independent best-first procs multiplexed by a pluggable
-    scheduler. Single-threaded; "proc" is a logical search process, not an
-    OS thread/process."""
+    `num_procs` independent RBFS procs (collapse/backup, O(b * d) live memory
+    each) multiplexed by a pluggable scheduler. Single-threaded; "proc" is a
+    logical search process, not an OS thread/process."""
 
     name = "mp-rbfs"
 
@@ -263,6 +257,7 @@ class MPRBFS(SearchAlgorithm):
         phase2_expanded = 0
         proc_switches = 0
         max_depth_reached = 0
+        max_proc_tree_size = 0
 
         try:
             phase1 = _run_phase1(problem, self.num_procs, tracker)
@@ -295,6 +290,7 @@ class MPRBFS(SearchAlgorithm):
                             winning_proc_id = proc.proc_id
                             break
                         phase2_expanded += 1
+                        max_proc_tree_size = max(max_proc_tree_size, len(proc.tree))
 
                     scheduler.on_expanded(proc)
 
@@ -321,7 +317,9 @@ class MPRBFS(SearchAlgorithm):
         result.nodes_expanded = phase1_expanded + phase2_expanded
         result.nodes_generated = tracker.nodes_generated
         result.max_depth_reached = max_depth_reached
-        result.reexpansions = phase1_stale + sum(p.stale_skips for p in procs)
+        result.reexpansions = phase1_stale + sum(p.stale_skips for p in procs) + sum(p.reexpansions for p in procs)
+        result.total_collapses = sum(p.collapses for p in procs)
+        result.max_proc_tree_size = max_proc_tree_size
 
         phase1_frontier = phase1.max_frontier_size if phase1 is not None else 0
         proc_frontier = sum(len(p.heap) for p in procs)

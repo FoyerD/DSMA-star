@@ -37,12 +37,22 @@ class AggregateMetrics:
     std_nodes_generated: float = 0.0
     avg_max_frontier_size: float = 0.0
     std_max_frontier_size: float = 0.0
+    avg_reexpansions: float = 0.0
+    std_reexpansions: float = 0.0
+    avg_total_collapses: float = 0.0
+    std_total_collapses: float = 0.0
+    avg_max_proc_tree_size: float = 0.0
+    std_max_proc_tree_size: float = 0.0
+    avg_proc_switches: float = 0.0
+    std_proc_switches: float = 0.0
     avg_solution_cost: Optional[float] = None
     std_solution_cost: Optional[float] = None
     avg_solution_depth: Optional[float] = None
     std_solution_depth: Optional[float] = None
     avg_optimality_gap: Optional[float] = None
     std_optimality_gap: Optional[float] = None
+    avg_optimality_gap_vs_known_optimal: Optional[float] = None
+    std_optimality_gap_vs_known_optimal: Optional[float] = None
 
 
 def _mean(values: List[float]) -> float:
@@ -85,16 +95,23 @@ def aggregate_by_domain_and_algorithm(
         n = len(group)
         successes = [r for r in group if r.success]
         gaps = []
+        known_gaps = []
         for r in successes:
             opt = optimal_costs.get((r.domain_name, r.instance_id))
             if opt is not None and opt > 0 and r.solution_cost is not None:
                 gaps.append((r.solution_cost - opt) / opt)
+            if r.known_optimal_depth is not None and r.known_optimal_depth > 0 and r.solution_cost is not None:
+                known_gaps.append((r.solution_cost - r.known_optimal_depth) / r.known_optimal_depth)
 
         runtimes_solved = [r.runtime_seconds for r in successes]
         peak_mem = [r.peak_memory_mb for r in group]
         nodes_expanded = [r.nodes_expanded for r in group]
         nodes_generated = [r.nodes_generated for r in group]
         max_frontier = [r.max_frontier_size for r in group]
+        reexpansions = [r.reexpansions for r in group]
+        collapses = [r.total_collapses for r in group]
+        tree_sizes = [r.max_proc_tree_size for r in group]
+        switches = [r.proc_switches for r in group]
         costs_solved = [r.solution_cost for r in successes if r.solution_cost is not None]
         depths_solved = [r.solution_depth for r in successes if r.solution_depth is not None]
 
@@ -118,12 +135,22 @@ def aggregate_by_domain_and_algorithm(
                 std_nodes_generated=_std(nodes_generated),
                 avg_max_frontier_size=_mean(max_frontier),
                 std_max_frontier_size=_std(max_frontier),
+                avg_reexpansions=_mean(reexpansions),
+                std_reexpansions=_std(reexpansions),
+                avg_total_collapses=_mean(collapses),
+                std_total_collapses=_std(collapses),
+                avg_max_proc_tree_size=_mean(tree_sizes),
+                std_max_proc_tree_size=_std(tree_sizes),
+                avg_proc_switches=_mean(switches),
+                std_proc_switches=_std(switches),
                 avg_solution_cost=_mean(costs_solved) or None,
                 std_solution_cost=_std_opt(costs_solved),
                 avg_solution_depth=_mean(depths_solved) or None,
                 std_solution_depth=_std_opt(depths_solved),
                 avg_optimality_gap=_mean(gaps) if gaps else None,
                 std_optimality_gap=_std_opt(gaps),
+                avg_optimality_gap_vs_known_optimal=_mean(known_gaps) if known_gaps else None,
+                std_optimality_gap_vs_known_optimal=_std_opt(known_gaps),
             )
         )
     return summaries

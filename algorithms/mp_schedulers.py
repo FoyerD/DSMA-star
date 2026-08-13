@@ -1,15 +1,16 @@
-"""Scheduling policies for Multi-Path RBFS (mp-rbfs).
+"""Scheduling policies shared by the multi-path algorithms (mp-bfs, mp-rbfs).
 
 A scheduler owns no search logic at all -- it is handed the list of `_Proc`
-objects (see `mp_rbfs.py`) once at construction, and thereafter is only
-asked two things, once per single-node-expansion quantum:
+objects (from `mp_bfs.py` or `mp_rbfs.py`) once at construction, and
+thereafter is only asked two things, once per single-node-expansion quantum:
 
     proc = scheduler.select_next()   # None means every proc is exhausted
     ...caller expands `proc` by exactly one node...
     scheduler.on_expanded(proc)      # proc.peek_f() / proc.active may differ now
 
 Keeping this contract narrow is what lets a new scheduling policy be added
-without touching `MPRBFS` or `_Proc` at all.
+without touching the algorithm or `_Proc` at all. Schedulers only read
+`proc.peek_f()`, `proc.active`, and `proc.proc_id` -- never the search state.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ _EPS = 1e-6
 
 
 class Scheduler(ABC):
-    """Common interface for every mp-rbfs scheduling policy."""
+    """Common interface for every multi-path scheduling policy."""
 
     def __init__(self, procs: Sequence) -> None:
         self.procs: List = list(procs)
