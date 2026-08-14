@@ -86,6 +86,12 @@ class RBFS(SearchAlgorithm):
         max_depth_reached = 0
         max_frontier_size = 0
         goal_found = False
+        # Backed-up subtrees: every non-goal return from a child _rbfs() call
+        # means that child's subtree was explored, its F backed up, and the
+        # parent abandoned it for another child. Recursive RBFS never *deletes*
+        # children (no literal Collapse), so this is the closest analog to
+        # ILBFS's collapse count -- both count subtree-abandonment events.
+        collapses = 0
         nodes: Dict[Any, _Node] = {state_key(start): root}
 
         # Raise the recursion limit so depth-60+ instances don't hit
@@ -95,7 +101,7 @@ class RBFS(SearchAlgorithm):
 
         def _rbfs(node: _Node, bound: float) -> float:
             nonlocal nodes_expanded, nodes_generated, max_depth_reached
-            nonlocal max_frontier_size, goal_found
+            nonlocal max_frontier_size, goal_found, collapses
 
             tracker.check_limits()
             if goal_found:
@@ -168,6 +174,8 @@ class RBFS(SearchAlgorithm):
 
                 # Line 10: recursive call
                 best.F = _rbfs(best, min(bound, second.F))
+                if not goal_found:
+                    collapses += 1  # child's subtree explored and backed up
 
                 if goal_found:
                     return 0.0
@@ -204,6 +212,7 @@ class RBFS(SearchAlgorithm):
         result.nodes_generated = tracker.nodes_generated
         result.max_frontier_size = max_frontier_size
         result.max_depth_reached = max_depth_reached
+        result.total_collapses = collapses
         return result
 
     @staticmethod

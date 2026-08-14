@@ -40,6 +40,19 @@ def test_rbfs_solves_easy_puzzle():
     assert result.solution_cost == 1
 
 
+def test_ilbfs_and_rbfs_report_collapses():
+    # RBFS-family collapse/back-up counters: a non-trivial 8-puzzle must
+    # back up at least one subtree, so total_collapses > 0 (previously these
+    # two algorithms always reported 0, which made mp-rbfs's collapse_ratio
+    # ~1.0 look pathological when it is normal RBFS behavior).
+    instance = generate_puzzle_instances(seeds=[3], size=3, scramble_depths=[10])[0]
+    for algorithm in (ILBFS(), RBFS()):
+        result = algorithm.search(instance.problem, LIMITS)
+        assert result.success
+        assert result.total_collapses > 0
+        assert result.total_collapses <= result.nodes_expanded * 2
+
+
 def test_benchmark_runner_produces_results_for_all_algorithms():
     instances = generate_puzzle_instances(seeds=[1, 2], size=3, scramble_depths=[10])
     algorithms = [

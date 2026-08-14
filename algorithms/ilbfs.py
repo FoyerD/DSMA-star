@@ -93,6 +93,7 @@ class ILBFS(SearchAlgorithm):
         tracker.nodes_generated = 1
         nodes_expanded = 0
         reexpansions = 0
+        collapses = 0  # nodes whose children were deleted by a Collapse (backed up)
         max_frontier_size = 1
         max_depth_reached = 0
         oldbest: Optional[_Node] = None
@@ -130,6 +131,7 @@ class ILBFS(SearchAlgorithm):
                     else:
                         oldbest.F = oldbest.f
                     oldbest.collapse_count += 1
+                    collapses += 1
                     heapq.heappush(
                         open_heap,
                         (oldbest.F + oldbest.collapse_count, -oldbest.depth, state_key(oldbest.state)),
@@ -216,6 +218,7 @@ class ILBFS(SearchAlgorithm):
         result.max_frontier_size = max_frontier_size
         result.max_depth_reached = max_depth_reached
         result.reexpansions = reexpansions
+        result.total_collapses = collapses
         return result
 
     @staticmethod

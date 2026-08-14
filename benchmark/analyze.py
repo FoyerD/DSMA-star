@@ -743,6 +743,22 @@ def write_markdown_summary(
     )
     lines += _rank_table(algorithm_summary, "avg_peak_memory_mb", ascending=True, label="average peak memory")
 
+    lines.append("## Metric notes")
+    lines.append("")
+    lines.append(
+        "- `reexpansion_ratio` and `collapse_ratio` measure the *same* RBFS-family back-up machinery: "
+        "a node whose children are deleted and later regenerated (ILBFS / mp-rbfs Collapse loop) or whose "
+        "subtree is explored, backed up, and abandoned (recursive RBFS). Ratios of roughly 1.0 are "
+        "**normal** for every RBFS-family algorithm -- the search backs up about one node per expansion "
+        "while walking between branches -- and are **not** a sign of pathology. `collapse_ratio = 0` simply "
+        "means the algorithm has no collapse machinery (A*, mp-bfs)."
+    )
+    lines.append(
+        "- `max proc tree` is reported only by mp-bfs / mp-rbfs: the largest live per-proc search tree "
+        "observed, confirming the O(b*d) memory bound."
+    )
+    lines.append("")
+
     lines.append("## Per-domain observations")
     lines.append("")
     domains = sorted({r["domain_name"] for r in domain_algorithm_summary})
@@ -760,9 +776,10 @@ def write_markdown_summary(
             collapse_detail = ""
             if r["avg_total_collapses"]:
                 collapse_detail = (
-                    f", collapses {_fmt(r['avg_total_collapses'])} ({_fmt_pct(r['collapse_ratio'])} of expanded), "
-                    f"max proc tree {_fmt(r['avg_max_proc_tree_size'])} nodes"
+                    f", collapses {_fmt(r['avg_total_collapses'])} ({_fmt_pct(r['collapse_ratio'])} of expanded)"
                 )
+                if r["avg_max_proc_tree_size"]:
+                    collapse_detail += f", max proc tree {_fmt(r['avg_max_proc_tree_size'])} nodes"
             lines.append(
                 f"- **{_display(r['algorithm_name'])}**: success {_fmt_pct(r['success_rate'])}, "
                 f"avg runtime (solved) {_fmt(r['avg_runtime_s_solved'])}s, "
@@ -788,7 +805,12 @@ def write_markdown_summary(
                 f"avg expanded {_fmt(r['avg_nodes_expanded'], 0)}, "
                 f"avg reexp {_fmt(r['avg_reexpansions'], 0)}"
                 + (
-                    f", avg collapses {_fmt(r['avg_total_collapses'], 0)}, max proc tree {_fmt(r['avg_max_proc_tree_size'], 0)}"
+                    f", avg collapses {_fmt(r['avg_total_collapses'], 0)} ({_fmt_pct(r['collapse_ratio'])} of expanded)"
+                    + (
+                        f", max proc tree {_fmt(r['avg_max_proc_tree_size'], 0)}"
+                        if r["avg_max_proc_tree_size"]
+                        else ""
+                    )
                     if r["avg_total_collapses"]
                     else ""
                 )

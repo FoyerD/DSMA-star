@@ -197,6 +197,12 @@ Status is uppercase: `SOLVED`, `MEMORY LIMIT`, `NODE LIMIT`, `FAILED`.
   aggregates (`benchmark/metrics.py:AggregateMetrics`): runtime, peak memory,
   expanded/generated, max frontier, **reexpansions, total_collapses,
   max_proc_tree_size, proc_switches**, `avg/std_optimality_gap_vs_known_optimal`.
+  `total_collapses` is reported by every RBFS-family algorithm (ILBFS collapse
+  loop iterations; RBFS = non-goal recursive back-ups; mp-rbfs = per-proc
+  collapse loop). **A `collapse_ratio ≈ 1.0` is NORMAL for all three** — the
+  search backs up roughly one node per expansion while switching branches —
+  and is not an mp-rbfs-specific pathology (see `Metric notes` in
+  `human_readable_summary.md`).
 - `analysis/` — curated reports from `benchmark/analyze.py`:
 
   | File | Contents |
@@ -298,6 +304,7 @@ Chronological.
 | 08-13 | (uncommitted) | Fixed Issue #2 (korf test now uses `DEFAULT_KORF_CSV`); **109 tests pass**. |
 | 08-13 | (uncommitted) | Analysis overhaul: analyze.py/metrics.py now handle all mp-* fields, added `by_difficulty_summary.csv` + `summary.json`, filled `_COMPARISON_PAIRS`, dropped `instance_comparison.csv` from orchestration. |
 | 08-13 | (uncommitted) | Added `run.sh` with the two submission benchmark runs (amit 21–40, korf 41/47/55). |
+| 08-14 | (uncommitted) | Benchmarked on the big machine (`imp_resutls/results_amit`, `results_korf`). Root-caused the mp-rbfs blowup (breadth-parallel fork defeats RBFS's depth-first focus; shared `best_g` hollows out re-expansions). **`collapse_ratio ≈ 1.0` is normal RBFS behavior, not a bug** — ILBFS collapses at the identical 0.99 ratio. Instrumented `total_collapses` counters into ilbfs/rbfs and added a `Metric notes` section to the markdown so the ratio is no longer misread. **110 tests pass**. |
 
 ## Issue log
 
@@ -442,7 +449,9 @@ Diagnostics printed nothing. Use `python -u` and the direct python binary
 
 mp-rbfs is a real RBFS: it re-expands (collapses) and its expansion counts are
 an order of magnitude above mp-bfs/ILBFS on harder depths, but memory stays
-tiny. Example (`total_collapses` / `max_proc_tree_size` are mp-rbfs-only):
+tiny. Example (`max_proc_tree_size` is mp-rbfs-only; `total_collapses` is
+reported by all RBFS-family algorithms — ILBFS/RBFS collapse at the same
+rate, so a `collapse_ratio ≈ 1.0` is expected, not a pathology):
 
 - depth 24: mp-rbfs ≈ 35K expansions / ~2s vs ILBFS 3.4K / 0.2s; solved.
 - depth 28: mp-rbfs ≈ 135K expansions / ~8s vs ILBFS ≈ 182K / 14s; solved.

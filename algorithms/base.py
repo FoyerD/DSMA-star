@@ -95,7 +95,7 @@ class SearchResult:
     proc_switches: int = 0
     phase1_expanded: int = 0
     phase2_expanded: int = 0
-    total_collapses: int = 0  # mp-rbfs only: collapse/backup events across all procs
+    total_collapses: int = 0  # RBFS-family only: collapsed/backed-up subtree events (ilbfs/rbfs/mp-rbfs)
     max_proc_tree_size: int = 0  # mp-rbfs only: largest live proc TREE observed (O(b*d) check)
     active_procs_at_solution: Optional[int] = None
     procs_used: Optional[int] = None

@@ -22,6 +22,11 @@
 4. **MP-BFS (best_first)** -- 2132.230
 5. **RBFS** -- 2223.621
 
+## Metric notes
+
+- `reexpansion_ratio` and `collapse_ratio` measure the *same* RBFS-family back-up machinery: a node whose children are deleted and later regenerated (ILBFS / mp-rbfs Collapse loop) or whose subtree is explored, backed up, and abandoned (recursive RBFS). Ratios of roughly 1.0 are **normal** for every RBFS-family algorithm -- the search backs up about one node per expansion while walking between branches -- and are **not** a sign of pathology. `collapse_ratio = 0` simply means the algorithm has no collapse machinery (A*, mp-bfs).
+- `max proc tree` is reported only by mp-bfs / mp-rbfs: the largest live per-proc search tree observed, confirming the O(b*d) memory bound.
+
 ## Per-domain observations
 
 ### n_puzzle
@@ -39,7 +44,7 @@
 - **A***: success 100.0%, avg runtime (solved) 6.715s, avg peak memory 276.152 MB, avg expanded 144591, avg reexp 0
 - **ILBFS**: success 0.0%, avg runtime (solved) n/as, avg peak memory 178.840 MB, avg expanded 2533687, avg reexp 995541
 - **MP-BFS (best_first)**: success 100.0%, avg runtime (solved) 7.105s, avg peak memory 326.344 MB, avg expanded 126528, avg reexp 925
-- **MP-RBFS (best_first)**: success 0.0%, avg runtime (solved) n/as, avg peak memory 282.332 MB, avg expanded 2502582, avg reexp 837889, avg collapses 2502213, max proc tree 63
+- **MP-RBFS (best_first)**: success 0.0%, avg runtime (solved) n/as, avg peak memory 282.332 MB, avg expanded 2502582, avg reexp 837889, avg collapses 2502213 (100.0% of expanded), max proc tree 63
 - **RBFS**: success 100.0%, avg runtime (solved) 9.653s, avg peak memory 354.387 MB, avg expanded 171012, avg reexp 0
 
 ### korf_depth_47 (optimal depth 47)
@@ -47,7 +52,7 @@
 - **A***: success 100.0%, avg runtime (solved) 9.149s, avg peak memory 397.383 MB, avg expanded 218817, avg reexp 0
 - **ILBFS**: success 0.0%, avg runtime (solved) n/as, avg peak memory 305.703 MB, avg expanded 2397405, avg reexp 1041697
 - **MP-BFS (best_first)**: success 100.0%, avg runtime (solved) 19.043s, avg peak memory 991.172 MB, avg expanded 322163, avg reexp 2459
-- **MP-RBFS (best_first)**: success 0.0%, avg runtime (solved) n/as, avg peak memory 614.945 MB, avg expanded 2569501, avg reexp 629774, avg collapses 2569164, max proc tree 74
+- **MP-RBFS (best_first)**: success 0.0%, avg runtime (solved) n/as, avg peak memory 614.945 MB, avg expanded 2569501, avg reexp 629774, avg collapses 2569164 (100.0% of expanded), max proc tree 74
 - **RBFS**: success 100.0%, avg runtime (solved) 30.118s, avg peak memory 1099.371 MB, avg expanded 540979, avg reexp 0
 
 ### korf_depth_55 (optimal depth 55)
@@ -55,7 +60,7 @@
 - **A***: success 0.0%, avg runtime (solved) n/as, avg peak memory 4508.641 MB, avg expanded 2678075, avg reexp 0
 - **ILBFS**: success 0.0%, avg runtime (solved) n/as, avg peak memory 2059.922 MB, avg expanded 2510683, avg reexp 1081091
 - **MP-BFS (best_first)**: success 100.0%, avg runtime (solved) 123.052s, avg peak memory 5079.176 MB, avg expanded 2219586, avg reexp 22758
-- **MP-RBFS (best_first)**: success 0.0%, avg runtime (solved) n/as, avg peak memory 2714.926 MB, avg expanded 3196021, avg reexp 381406, avg collapses 3195569, max proc tree 63
+- **MP-RBFS (best_first)**: success 0.0%, avg runtime (solved) n/as, avg peak memory 2714.926 MB, avg expanded 3196021, avg reexp 381406, avg collapses 3195569 (100.0% of expanded), max proc tree 63
 - **RBFS**: success 0.0%, avg runtime (solved) n/as, avg peak memory 5217.105 MB, avg expanded 2744179, avg reexp 0
 
 ## Tradeoff discussion
