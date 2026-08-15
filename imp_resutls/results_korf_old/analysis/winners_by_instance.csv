@@ -1,4 +1,4 @@
 domain_name,instance_id,fastest_successful_algorithm,lowest_memory_successful_algorithm,fewest_expansions_successful_algorithm,best_solution_cost_algorithm,notes
-n_puzzle,korf2_d55,mp-bfs-round_robin,mp-bfs-round_robin,mp-bfs-round_robin,mp-bfs-best_first,
+n_puzzle,korf2_d55,mp-bfs-best_first,mp-bfs-best_first,mp-bfs-best_first,mp-bfs-best_first,
 n_puzzle,korf30_d47,astar,astar,astar,astar,A* solved fastest
-n_puzzle,korf55_d41,astar,astar,mp-bfs-proportional,astar,A* solved fastest
+n_puzzle,korf55_d41,astar,astar,mp-bfs-best_first,astar,A* solved fastest
