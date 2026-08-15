@@ -18,6 +18,8 @@ python -u main.py --domain puzzle --puzzle-instance-source amit \
   --output-dir results_amit
 
 echo "=== [2/2] korf sample: optimal depths 41, 47, 55 (ids 55/30/2; measured A* reference, not regression-predicted) (~10-30 min) ==="
+# ILBFS is excluded from the korf run: it has already failed on 8 of the 11
+# amit instances at depth >= 30 and takes far too long on these deeper instances.
 python -u main.py --domain puzzle --puzzle-instance-source korf \
   --optimal-depths 41 47 55 \
   --algorithms astar rbfs mp-bfs-best_first mp-bfs-round_robin mp-bfs-proportional mp-rbfs-best_first mp-rbfs-round_robin mp-rbfs-proportional \
