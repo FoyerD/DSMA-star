@@ -35,13 +35,17 @@ algorithms/        # SearchAlgorithm subclasses (astar, ilbfs, rbfs, mp_bfs, mp_
                    #   + shared base/_run_utils + mp_common + mp_schedulers
 benchmark/         # Runner, instance generators, metrics, results analysis
 scripts/           # One-time precomputation (generate_depths21_40.py, precompute/fill astar nodes) + run_ilbfs_verbose.py
+paper-scripts/     # Paper deliverables: make_tables.py / make_figures.py (regenerate the
+                   #   paper's tables/figures from imp_resutls/ raw CSVs), build_paper.sh,
+                   #   README.md
 docs/              # Design docs (ilbfs.md, mp_bfs.md, mp_rbfs.md)
 instances/         # korfs100.csv, puzzle_amit_depths21_40.csv, puzzle_depths21_40.csv
 main.py            # CLI entrypoint
 ```
 
-**NOTE:** `results/` and `opencode.json` are in `.gitignore`; `AGENTS.md` and
-`docs/` are tracked in git.
+**NOTE:** `results/` and `opencode.json` are in `.gitignore`; `AGENTS.md`,
+`docs/`, and `paper-scripts/` are tracked in git. The LaTeX paper itself
+lives in the gitignored `ignore/` directory.
 
 > **`README.md` used to be stale** (it described the removed SMA*/DSMA*/Two-Level
 > algorithms, the Sokoban domain, and ILBFS-as-cost-bound-search). It was
@@ -224,6 +228,20 @@ in the analysis layer, never in `benchmark/results.py`. `instance_comparison.csv
 was removed from orchestration (it was a subset of the raw CSV) — the writer
 function remains for compatibility. Re-run analysis on existing data with
 `python main.py --analyze-only`.
+
+### Paper artifacts
+
+The paper's tables and figures are regenerated from the raw CSVs by
+`paper-scripts/` (a deliverable; see `paper-scripts/README.md`):
+
+```bash
+python -u paper-scripts/make_tables.py --out ignore/Tables
+python -u paper-scripts/make_figures.py --out ignore/Figures
+paper-scripts/build_paper.sh     # 4-pass pdflatex+bibtex build + undefined-ref/overfull checks
+```
+
+The LaTeX project and its generated `Tables/`/`Figures/` live in the gitignored
+`ignore/` dir; the scripts and the raw `imp_resutls/` data are what is tracked.
 
 ## Assignment submission runs (on another machine)
 
